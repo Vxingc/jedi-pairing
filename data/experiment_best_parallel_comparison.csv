@@ -1,0 +1,6 @@
+dimension,scheme,setup_s,prove_s,verify_ms,estimated,notes
+2D,Best Parallel,26.05621,2.41528,34.67,false,"setup/prove best from 20 workers; verify best from 16 workers"
+2D,PoneglyphDB,56.191891755,266.985772244,42.274822,false,
+2D,ZK-acc,27.93433,70.39478,5.75,false,
+3D,Best Parallel,26.54322,19.30138,152.17,false,"setup best from 10 workers; prove best from 100 workers; verify best from 50 workers"
+3D,PoneglyphDB,57.872005707,458.075726445,50.84907,false,

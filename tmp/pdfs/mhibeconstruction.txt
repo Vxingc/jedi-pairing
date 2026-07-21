@@ -1,0 +1,446 @@
+
+
+===== PAGE 1 =====
+MHIBE Construction and Proof of Security
+1 Properties of MHIBE
+. First, we review the properties that MHIBE scheme should have.
+1.1 From HIBE to MHIBE
+1.1.1 Review of HIBE
+An ID of depth k is a vector with k entries, denoted as (I1,I 2, · · ·,Ik). We assume Ii ∈ {0, 1}
+for i ∈ [1,k ] for ease of explanation. From Fig. 1, there is a hierarchy of identities arranged in a
+tree where identities correspond to the nodes. Each identity is represented by a vector. A secret
+key corresponding to a node x can and only can be used to decrypt any ciphertext intended for a
+node z where z is a node in the subtree rooted at x.
+Figure 1: The hierarchy of identities
+1.1.2 Properties of MHIBE
+Ad-dimensional identity consists of d such 1-dimensional identities in HIBE. A d-dimensional
+identityID (d) is denoted as
+ID (d) =(ID 1,h1, · · ·,IDi,hi, · · ·,IDd,hd)
+=((I1,1,I 1,2, · · ·,I 1,h1), · · ·, (Ii,1,Ii,2, · · ·,Ii,hi),
+· · ·, (Id,1,Id,2, · · ·,Id,hd)),
+which consists of d vectors each of which denotes an identity as in HIBE. ∀i ∈ [1,d ], IDi,hi =
+(Ii,1,Ii,2, · · ·,Ii,hi) ∈ (Z∗
+p)hi denotes the one-dimensional identity in the ith dimension is at depth
+hi. That is, there are d such trees like in Fig. 1. In each dimension i, there is a hierarchy of
+one-dimensional identities as in HIBE, arranged in the ith tree out of the d trees, as in Fig. 1.
+The property of the multi-dimensional hierarchical identity-based encryption scheme (MHIBE)
+is that, a secret key corresponding to ad-dimensional identityID (d) = (ID 1,h1, · · ·,IDi,hi, · · ·,IDd,hd)
+can only be used to decrypt any ciphertext intended for ad-dimensional identityID′(d) = (ID′
+1,h′
+1
+, · · ·,ID′
+d,h′
+d
+)
+in which for i ranging from 1 to d, ID′
+i,h′
+i
+is a node in the subtree rooted at IDi,hi in the ith tree.
+1.1.3 Notations
+For distinction, from now on, we call d-dimensional identities d-dimensional identities and
+identities interchangeably, and we denote the 1-dimensional identities which are components of d-
+1
+
+
+===== PAGE 2 =====
+dimensional identities as 1-dimensional identities and domain identities interchangeably. For exam-
+ple,ID (d) is called ad-dimensional identity which consists ofd domain identities, i.e.ID 1,h1, · · ·,IDd,hd.
+2 MHIBE Construction with JEDI
+In [1], the authors propose JEDI scheme where the encryption module works exactly as a two-
+dimensional HIBE. In their construction, a message is encrypted with a two-dimensional “identity”.
+Each dimension has a hierarchy. The ﬁrst dimension is used to represent Uniform Resource Indicator
+(URI), which is like a ﬁle path. For example, a message m can be sent (in the encrypted form) to
+the URIbuildingA/floor 2/roomLHall/sensor 0/temp. Anyone who has a secret key for the preﬁx
+of this URI can derive a secret key for it to decrypt the message m. Another dimension is used to
+express time, which is represented as year/month/day/hour. Similarly, anyone who has a secret
+key for the preﬁx of a time representation can derive a secret key for this time presentation. For
+example, a secret key for 2019/DEC/10 can be used to derive the secret key for 2019 /DEC/10/9.
+In JEDI, the secret key is associated with both URI and time. To be consistent with MHIBE, we
+can regard the secret key is associated with ( URI,time ) which can be seen as a two-dimensional
+identity. The slashes in URI and time representation can be replaced by commas to transform the
+representation to vectors. As in MHIBE, a secret key associated with the URI URI and the time
+t (i.e.(URI,t )) can and only can derive the secret key associated with URI′ and t′ (i.e.(URI′,t′))
+where URI is a preﬁx of URI′ and t is a preﬁx of t′.
+With JEDI, we can directly extend their encryption scheme to support d-dimensional HIBE
+where d ≥ 2. Indeed, the encryption scheme in JEDI is based on WKD-IBE [2] scheme, which
+is also the core of the MHIBE construction. Thus, we ﬁrst explain WKD-IBE [2] scheme as a
+preparation for our construction .
+2.1 WKD-IBE scheme
+In WKD-IBE scheme, messages are encrypted with patterns. We assume all patterns have a
+ﬁxed length l. A pattern P with length l is a list of values: P = (Z∗
+p ∪ {⊥})l, where ⊥ means a
+wildcard. We denote P (i) as the ith component of P , 1-indexed. For consistency with MHIBE
+construction, we regard P as a vector of l entries, where the ith entry corresponds to P (i).
+Here, we denote the component containing Z∗
+p as ﬁxed, and the component containing ⊥ as free.
+A patternP2 matches a patternP1 if and only if: for all i ∈ [1,l ],P1(i) = ⊥ orP1(i) =P2(i). That
+means, if the ith component is ﬁxed in P1, P2 must match it at the index i. If the ith component
+is free (i.e. ⊥), whatever P2(i) is, it can match P1(i) since P1(i) is a wildcard.
+A secret key associated with a pattern P1 can decrypt the message encrypted with a pattern
+P2 if and only if P1 = P2. Furthermore, in WKD-IBE, a secret key associated with a pattern P1
+can be used to the derive the secret key for a pattern P2 where P2 matchesP1. Thus, a secret key
+associated with a pattern P1 can be used to decrypt any message encrypted with a pattern P2 if
+P2 matchesP1.
+The concept of ﬁxed and free can help the readers understand the process of deriving secret
+keys from one pattern P1 to another pattern P2. We deﬁne them as follows.
+Deﬁnition 1. For a pattern P , we deﬁne:
+fixed(P ) = {(i,P (i))|P (i) ̸= ⊥}
+free(P ) = {i|P (i) = ⊥}
+2
+
+
+===== PAGE 3 =====
+Thus, we can regard the process of deriving secret keys as replacing thefree(P ) in the pattern
+P with Z∗
+p to generate secret keys for new patterns.
+2.2 Supporting Multiple Dimensions Using WKD-IBE
+Recall that JEDI realizes a 2-dimensional HIBE scheme where the ﬁrst dimension represents
+URI and the second dimension represents time. They achieve the 2-dimensional HIBE by using
+WKD-IBE creatively. Speciﬁcally, assume the maximum length of URI is l1 and the maximum
+length of a time representation is l2. JEDI sets the maximum length of a pattern to be l =l1 +l2.
+A pattern P is associated with the URI and time ( P a vector) where the ﬁrst l1 entries represent
+URI and the last l2 entries represent the time.
+The message is encrypted with a pattern. Here, we explain how to represent URI and time as
+patterns in encryption. If the length of the URI associated with m is shorter than l1, for example,
+l1 = 5 and URI is a/b/c, the URI will be represented as a/b/c/$/⊥ where $ is a terminator symbol
+and ⊥ means this entry is free. For the time, if the length of the time representation is shorter
+than l2 = 4, such as 2019/DEC/, it will be represented as 2019 /DEC/ ⊥/⊥ which means the last
+two entries are free. Thus, a message associated with a/b/c/ and 2019/DEC/ will be encrypted
+with the pattern (a,b,c, $, ⊥, 2019,DEC, ⊥, ⊥).
+Secret keys are also associated with patterns. If the length of URI or of time representation is
+shorter than the maximum length, the remaining non-ﬁxed entries are automatically regarded as
+⊥, which means they are free. For example, a secret key associated with a/b/c/ and 2019/DEC/
+is equivalent that it is associated with the pattern ( a,b,c, ⊥, ⊥, 2019,DEC, ⊥, ⊥)
+Thus, the URI and time can be combined to form a patternP2 as in WKD-IBE and the message
+m can be encrypted with P2. A secret key associated with a pattern P1 can be used to derive a
+secret key for the pattern P2 if and only if P2 matches P1. Since URI and time representation ﬁx
+their representation slots from left to right, P2 matchesP1 also means the URI in P1 is a preﬁx of
+the URI in P2 and the time in P1 is also a preﬁx of that of P2.
+Note that adding a terminator symbol $ in URI in encryption is not necessary for security
+purpose. Thus, we can omit $ and replace it with ⊥ in our construction.
+2.3 MHIBE construction with JEDI
+We directly extend the encryption scheme in JEDI to support d-dimensional HIBE where
+d ≥ 2. We let the maximum length of a pattern to be l = dlb where lb is the length of binary
+strings to represent keys in the key-value store D (lb corresponds to the l in the one-dimensional
+scheme [3]).We explain our detailed construction which is based on the construction provided in
+JEDI scheme [1], Appendix A.1.
+As the ﬁrst step, as in JEDI where they show how to represent the ( URI,time ) as patterns,
+we ﬁrst describe how to represent the d-dimensional identities as patterns.
+2.3.1 Representing d-dimensional identities as patterns
+We deﬁne an algorithmTransform (ID (d)) which takes ad-dimensional identity as input, and
+transforms it to a pattern P as output.
+• Transform (ID (d)). Given ad-dimensional identityID (d) = (ID 1,h1, · · ·,IDi,hi, · · ·,IDd,hd),
+3
+
+
+===== PAGE 4 =====
+ID (d) is parsed as
+(ID 1,h1, · · ·,IDi,hi, · · ·,IDd,hd)
+=((I1,1,I 1,2, · · ·,I 1,h1), · · ·, (Ii,1,Ii,2, · · ·,Ii,hi),
+· · ·, (Id,1,Id,2, · · ·,Id,hd))
+Like JEDI, we would like each domain identity to have the maximum length lb (we will
+explain this setting later in the detailed construction) since the maximum number of entries
+are designed speciﬁcally to represent identities in this dimension. Thus, for i ∈ [1,d ], if the
+length of IDi,hi (i.e. hi) is smaller than lb, the algorithm pads the remaining ld −hi entries
+as ⊥, meaning they are free. Thus, it is equivalent that the ID (d) is a pattern P as
+P =ID (d)
+=((I1,1,I 1,2, · · ·,I 1,h1, ⊥, · · ·, ⊥  
+lb−h1
+), · · ·, (Ii,1,Ii,2, · · ·,Ii,hi ⊥, · · ·, ⊥  
+lb−hi
+),
+· · ·, (Id,1,Id,2, · · ·,Id,hd, ⊥, · · ·, ⊥  
+lb−hd
+))
+=(I1,I 2, · · ·,Ih1, ⊥, · · ·, ⊥  
+lb−h1
+, · · ·,I (i−1)lb+1,I (i−1)lb+2, · · ·,I (i−1)lb+hi, ⊥, · · ·, ⊥  
+lb−hi
+, · · ·,
+I(d−1)lb+1,I (d−1)lb+2, · · ·,I (d−1)lb+hd, ⊥, · · ·, ⊥  
+lb−hd
+),
+We get the last equation by numbering the entries (i.e. Ii (i ∈ [1,dlb])) based on their indices
+in the vector that represents the pattern P .
+After transforming thed-dimensional identityID (d) = (ID 1,h1, · · ·,IDi,hi, · · ·,IDd,hd) to the
+pattern P , we have the following deﬁnition which is an equivalent expression for P′ matches
+P .
+Deﬁnition 2. Given ID (d) = (ID 1,h1, · · ·,IDi,hi, · · ·,IDd,hd) where Transform (ID (d)) =
+P and ID′(d) = (ID′
+1,h′
+1
+, · · ·,ID′
+d,h′
+d
+) where Transform (ID′(d)) = P′. We denote ID′(d)
+matches ID (d) iﬀ i ∈ [1,d ], IDi,hi is a preﬁx of ID′
+i,h′
+i
+.
+Iﬀ P′ matches P , for i ∈ [1,d ], IDi,hi is a preﬁx of ID′
+i,h′
+i
+. Thus, ID′(d) matches ID (d) is
+equivalent to P′ matches P .
+More importantly, by this deﬁnition, we can translate P′ matches P in WKD-IBE scheme
+to ID′(d) matches ID (d) thus construct our MHIBE scheme. To be speciﬁc, in WKD-IBE
+scheme, the secret key associated with P should be able to derive a secret key associated
+with P′ if and only if P′ matches P . Correspondingly, a secret key associated with ID (d)
+(corresponds to P ) can be used to derive the secret key for ID′(d) (corresponds to P′) if
+and only if ID′(d) matchesID (d). Thus, by transforming identities to patterns, we can build
+MHIBE scheme directly on the basis of WKD-IBE scheme.
+2.3.2 Detailed construction
+The construction is based on bilinear groups. Let G1,G2 and GT be cyclic groups of prime
+orderp, and let e be a bilinear map such that e : G1 × G2 → GT . The security parameter is κ. The
+construction consists of four phases : Setup, KeyGen, Encrypt and Decrypt.
+4
+
+
+===== PAGE 5 =====
+We denote the MHIBE identity as a d-dimensional identityID (d) = (ID 1,h1, · · ·,IDi,hi, · · ·,IDd,hd)
+where for i ∈ [1,d ], hi is the length of the 1-dimensional identity in the ith dimension and the hi
+entries are ﬁxed. Assume the length of binary strings to represent keys in the key-value store D is
+lb (recall that our scheme is the extension of [3] to multiple keys). Then, in the Setup phase, the
+algorithm sets l =dlb.
+• Setup(1l). Select g $← −G2 and α $← −Z∗
+p. Let g1 = gα. Select g2,g 3,h 1,h 2, · · ·,hl
+$← −G1.
+Set g4 =gα
+2 . The public parameters are Params = (g,g 1,g 2,g 3,h 1,h 2, · · ·,hl). The master
+secret key is set as MSK =g4.
+For ease of exposition, we divide parameters fromh1 tohl in tod segments where theith seg-
+ment containslb parameters fromh(i−1)lb+1 tohilb. This division can help served-dimensional
+identities for MHIBE, where each segment can be used for a one-dimensional identity, respec-
+tively.
+• KeyGen(K,ID (d)). First, the algorithm transforms the d-dimensional identity to a corre-
+sponding pattern by P ←Transform (ID (d)). Then we explain how to generate secret keys
+for the pattern P .
+– If K is the master secret key, i.e. K = g4, the algorithm generates the secret key for
+ID (d) using the corresponding P as:
+a1 =g4
+(
+g3
+∏
+(i,P (i))∈fixed (P )
+hIi
+i
+)r;a2 =gr,b = {(i,bi =hr
+i )}i∈free (P ),
+where r $← −Z∗
+p.
+– IfK is not the master secret key,K must be a secret key associated with ad-dimensional
+identityID (d)
+K which corresponds to a pattern PK. If P matchesPK, which means each
+one-dimensional identity in ID (d)
+K is a preﬁx of that in ID (d), the algorithm will output
+a secret key associated with ID (d). Otherwise, the algorithm will return ⊥ which means
+it will end without outputting a secret key.
+If P matches PK, parse K as (a1,a 2,b ) as above. The algorithm generates the secret
+key (a′
+1,a′
+2,b′) for P using K as:
+a′
+1 =a1 ·
+(
+g3
+∏
+(i,Ii)∈fixed (P )
+hIi
+i
+)r′
+·
+( ∏
+(i,Ii)∈fixed (P ),i∈free (PK )
+bIi
+i
+)
+;
+a′
+2 =a2 ·gr′
+,b′ = {(i,b′
+i =bi ·hr′
+i )}i∈free (P ),
+where r′ $← −Z∗
+p.
+– Note that the resulting key is identically distributed, regardless of whether or not the
+input key K is the master secret key. This is important when we use MHIBE for zero-
+knowledge proof. This property is referred to as history-independence in [1], Appendix.E.
+• Encryt(ID (d),m ). To encrypt a message m ∈ GT for a d-dimensional identity ID (d), the
+algorithm ﬁrst transform the identity to a pattern P ←Transform (ID (d)). Then, with P ,
+the algorithm chooses t ∈ Z∗
+p and outputs the ciphertext C = (C1,C 2,C 3) ∈ G1 × G2 × GT ,
+where
+C1 =gt,C 2 =
+(
+g3
+∏
+(i,Ii)∈fixed (P )
+hIi
+i
+)t;C3 =m ·e(g1,g 2)t
+5
+
+
+===== PAGE 6 =====
+• Decrypt(K,C ). Let C = (C1,C 2,C 3) and P be the pattern corresponding to the ID (d) with
+which the ciphertext is encrypted. If K is the master secret key g4, the message can be
+decrypted by computing C3/e(C1,K ). Otherwise, parse K as (a1,a 2,b ). If K is associated
+with a pattern PK (i.e.d-dimensional identity ID (d)
+K ) and P matches PK but P ̸= PK, the
+decryption algorithm ﬁrst computes the secret key for P by callingKeyGen(K,ID (d)) which
+outputs a secret key K′ associated with ID (d). Parse K′ as (a′
+1,a′
+2,b′) . Then, the message is
+recovered by the following computation.
+m ←C3 · e(a′
+2,C 2)
+e(C1,a′
+1)
+If P matchesPK and P =PK, the process of calling KeyGen(K,ID (d)) can be skipped and
+the input (a′
+1,a′
+2,b′) for the equation is replaced by ( a1,a 2,b ).
+.
+2.4 Proof of security and the history-independence property
+Our scheme is a direct application of JEDI [1] without modiﬁcation. For the history-independence
+property, the proof is just as the proof in [1]. For the security, we will provide the proof in the
+following.
+To be noted, after reading the proof of security in JEDI scheme [1], I found their proof (Theorem
+1 in [1]) was ﬂawed. The authors observe that the encryption algorithm in the original WKD-IBE
+scheme in [2] which can only work with identities, can be extended to work with arbitrary patterns.
+Thus, they construct their own WKD-IBE scheme on the basis of the original WKD-IBE scheme
+using their observation. However, they did not provide a proof for their observation. In their
+proof of security, they prove the security of their JEDI directly on the basis of their constructed
+WKD-IBE rather than the original WKD-IBE scheme, which is not rigorous.
+Our scheme is constructed on the basis of the WKD-IBE scheme in JEDI scheme [1]. However,
+in the following proof, I will prove the security of our scheme directly on the basis of the original
+WKD-IBE scheme in [2].
+3 Security of M-HIBE
+Theorem 1. Assume the BBG-WKD-IBE scheme in [2] is IND-sWKID-CPA secure. Then, no
+probabilistic polynomial-time adversary A can win the following security game against a challenger
+C with non-negligible advantage.
+• Initialization.The adversary A ﬁrst outputs a d-dimensional identity
+ID (d)∗ = (ID∗
+1,h1, · · ·,ID∗
+i,hi, · · ·,ID∗
+d,hd)
+that it intends to attack.
+• Setup. The challenger C runs the Setup algorithm and gives A the resulting system param-
+eters, keeping the master secret key to itself.
+• Phase 1. A issuesqm secret key queries corresponding d-dimensional identitiesID (d)
+1 , · · ·,ID (d)
+qm .
+The restriction is ID (d)∗ matches none of them.
+6
+
+
+===== PAGE 7 =====
+• Challenge. Once A decides that Phase 1 is over, it outputs two equal length plaintexts
+M0,M 1 ∈ M on which it wishes to be challenged. C picks a random bit b ∈ { 0, 1} and sets
+the challenge ciphertext to CT =Encrypt(params,ID (d)∗,Mb), which is sent to A.
+• Phase 2. A issues secret key queries corresponding to the d-dimensional identitiesID (d)
+qm+1,ID (d)
+qK
+as long as the ID (d)∗ does not match any of them.
+• Guess: Finally, the adversary outputs a guess b′ ∈ {0, 1} and wins if b =b′. We deﬁne the
+advantage of the adversary A in attacking the scheme E as
+AdvE,A = |P [b′ =b] − 1/2|
+4 Proof of Theorem 1
+Proof. We show that, given an adversary A with non-negligible advantage in the game in Theorem
+1, one can construct an algorithmB with non-negligible advantage in the IND-sWKID-CPA security
+game [2]. We denote as C the IND-sWKID-CPA security challenger.
+• Initialization Adversary A ﬁrst outputs to B a d-dimensional identityID (d)∗ = (ID∗
+1,h1, · · ·,ID∗
+d,hd)
+that it intends to attack. By transforming this identity to the corresponding pattern P∗, the
+length of P∗ isdl. Assume fixed(P ) is the set of indices where the entries are not wildcards.
+Since in the BBG-WKD-IBE scheme, the adversary should choose an identity rather than
+a pattern to attack, B replaces those wildcards in P (the indices are in fixed(P )) with 0.
+We denote the resulting identity which keeps the non-wildcard entries in P∗ and replaces
+wildcards with 0s as P′∗. Thus, B outputs P′∗ to the BBG-WKD-IBE scheme.
+• Setup The BBG-WKD-IBE challenger outputs mpk = (g,g 1,g 2,g 3,h 1, · · ·,hdlb) to B and
+keepsmsk =g4. Then, B output mpk = (g,g 1,g 2,g 3,h 1, · · ·,hdlb) to the adversary A.
+• Phase 1 . The adversary A issues qm queries corresponding to any d-dimensional identity
+ID (d)
+i (i ∈ [1,qm]) as long as ID (d)∗ does not match any of them. To be noted, for those
+queries, neither of their entries can be 0 since in our construction, we do not allow zero
+entries in domain identities. Thus, we discard d-dimensional identities with zero entries. After
+receiving those queries, B just transfer those d-dimensional identity to patterns and queries
+secret key corresponding to those patterns from C. Since ID (d)∗ does not match any of ID (d)
+i
+(i ∈ [1,qm]), the transformed and modiﬁed pattern P′∗ also does not match any of those
+patterns associated with the queried identities.(Imagine in each pattern Pj corresponding to
+the d-dimensional identity ID (d)
+j , there is some indice kj such that P∗(kj) ̸= Pj(kj) where
+j ∈ [1,qm].) The BBG-WKD-IBE challenger generate secret keys for Pj which is associated
+with ID (d)
+j as:
+a1 =g4
+(
+g3
+∏
+(i,Ii)∈fixed (Pj )
+hIi
+i
+)r;a2 =gr,b′ = {bi =hr
+i }i∈free (Pj )
+The BBG-WKD-IBE challenger returns the above secret key to B and B returns it to A
+without any modiﬁcation except adding the indices of free entries in b′.
+• Challenge. When the adversary decides phase 1 is over, it output two messages M0,M 1
+on which they want to be challenged on. B sends them directly to the BBG-WKD-IBE
+7
+
+
+===== PAGE 8 =====
+challenger. The challenger ﬁlps a coin b, and the output ciphertext is
+C∗
+1 =gt,C∗
+2 =
+(
+g3
+dlb∏
+i=1
+hI∗
+i
+i
+)t;C∗
+3 =Mb ·e(g1,g 2)t
+To be noted, for those entries that are padded with 0s, hI∗
+i
+i is 1. Thus,
+C∗
+2 =
+(
+g3
+dlb∏
+i=1
+hI∗
+i
+i
+)t =
+(
+g3
+∏
+(i,I∗
+i )∈fixed (P∗)
+hI∗
+i
+i
+)t
+. B can directly return this ciphertext to A.
+• Guess. A outputs a guess b′. Based on A’s guess, B output the same b′ as his/her guess. We
+can see that the advantage of the adversary B in attacking the BBG-WKD-IBE scheme E′ is
+no less than the advantage of the adversary A in attacking our scheme E. That is,
+AdvE,A = |P [b′ =b] − 1/2| ≤ AdvE′,B = |P [b′ =b] − 1/2|
+If AdvE,A is no less than some non-negligible probability, there is an adversary B with non-
+negligible advantage to break IND-sWKID-CPA security in BBG-WKD-IBE scheme.
+References
+[1] S. Kumar, Y. Hu, M. P. Andersen, R. A. Popa, and D. E. Culler, “Jedi: Many-to-many end-
+to-end encryption and key delegation for iot,” arXiv preprint arXiv:1905.13369 , 2019.
+[2] M. Abdalla, E. Kiltz, and G. Neven, “Generalized key delegation for hierarchical identity-based
+encryption,” in European Symposium on Research in Computer Security . Springer, 2007, pp.
+139–154.
+[3] E. Ghosh, O. Ohrimenko, and R. Tamassia, “Eﬃcient veriﬁable range and closest point queries
+in zero-knowledge,” Proceedings on Privacy Enhancing Technologies, vol. 2016, no. 4, pp. 373–
+388, 2016.
+8

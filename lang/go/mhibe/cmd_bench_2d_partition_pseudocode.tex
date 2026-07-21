@@ -1,0 +1,59 @@
+% Requires in the LaTeX preamble:
+% \usepackage{algorithm}
+% \usepackage{algpseudocode}
+% \usepackage{amsmath,amssymb}
+
+\begin{algorithm}[t]
+\caption{2D query partition module}
+\begin{algorithmic}[1]
+\Procedure{Partition2D}{$xMin, xMax, yMin, yMax, bitLen$}
+    \State $domain \gets 2^{bitLen} - 1$
+    \State \Return \Call{SplitRect}{xMin, xMax, yMin, yMax, 0, domain, 0, domain, \epsilon, \epsilon}
+\EndProcedure
+
+\Procedure{SplitRect}{$xMin, xMax, yMin, yMax, nodeXMin, nodeXMax, nodeYMin, nodeYMax, prefixX, prefixY$}
+    \If{$xMax < nodeXMin$ or $xMin > nodeXMax$ or $yMax < nodeYMin$ or $yMin > nodeYMax$}
+        \State \Return $[\,]$
+    \EndIf
+
+    \If{$xMin \le nodeXMin$ and $nodeXMax \le xMax$ and $yMin \le nodeYMin$ and $nodeYMax \le yMax$}
+        \State \Return $[(prefixX, prefixY)]$
+    \EndIf
+
+    \If{$nodeXMin = nodeXMax$ and $nodeYMin = nodeYMax$}
+        \State \Return $[\,]$
+    \EndIf
+
+    \State $width \gets nodeXMax - nodeXMin$
+    \State $height \gets nodeYMax - nodeYMin$
+
+    \If{$width \ge height$ and $nodeXMin < nodeXMax$}
+        \State $midX \gets nodeXMin + \lfloor (nodeXMax - nodeXMin)/2 \rfloor$
+        \State $left \gets \Call{SplitRect}{xMin, xMax, yMin, yMax, nodeXMin, midX, nodeYMin, nodeYMax, prefixX \Vert 0, prefixY}$
+        \State $right \gets \Call{SplitRect}{xMin, xMax, yMin, yMax, midX + 1, nodeXMax, nodeYMin, nodeYMax, prefixX \Vert 1, prefixY}$
+        \State \Return $left \mathbin{+\!\!+} right$
+    \Else
+        \State $midY \gets nodeYMin + \lfloor (nodeYMax - nodeYMin)/2 \rfloor$
+        \State $bottom \gets \Call{SplitRect}{xMin, xMax, yMin, yMax, nodeXMin, nodeXMax, nodeYMin, midY, prefixX, prefixY \Vert 0}$
+        \State $top \gets \Call{SplitRect}{xMin, xMax, yMin, yMax, nodeXMin, nodeXMax, midY + 1, nodeYMax, prefixX, prefixY \Vert 1}$
+        \State \Return $bottom \mathbin{+\!\!+} top$
+    \EndIf
+\EndProcedure
+
+\Procedure{ToWildcardPattern}{$prefixX, prefixY, bitLen$}
+    \State $patternX \gets prefixX$
+    \For{$i \gets |prefixX|$ to $bitLen - 1$}
+        \State $patternX \gets patternX \Vert \ast$
+    \EndFor
+    \State $patternY \gets prefixY$
+    \For{$i \gets |prefixY|$ to $bitLen - 1$}
+        \State $patternY \gets patternY \Vert \ast$
+    \EndFor
+    \State \Return $patternX \Vert patternY$
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\noindent\textbf{Note.}
+This module only partitions a 2D query range into canonical blocks.
+Data upload, full-database attribute generation, and WKD-IBE key generation are separate stages.

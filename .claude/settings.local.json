@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:help.apiyi.com)",
+      "WebFetch(domain:claudefa.st)",
+      "Bash(go env *)",
+      "Read(///wsl.localhost/ubuntu/home/xing/go/pkg/mod/**)"
+    ]
+  }
+}

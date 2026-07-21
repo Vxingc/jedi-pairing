@@ -1,0 +1,138 @@
+\documentclass[11pt,a4paper]{ctexart}
+
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue
+}
+
+\title{M-HIBE 空区域密钥生成算法伪代码}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{符号说明}
+
+设数据库为 $D=\{p_1,\ldots,p_n\}$，共有 $d$ 个维度，每个维度使用 $L$ bit 表示。
+固定一个维度顺序
+\[
+  \pi=(\pi_1,\pi_2,\ldots,\pi_d),
+\]
+例如三维场景中可取 $\pi=(X,Y,Z)$。
+
+算法的核心思想是：不枚举整个多维空间，而是沿真实数据形成的前缀父节点逐层补充空区域。
+若某个父节点下的下一维范围没有数据，则生成一个空区域父密钥，并用通配符覆盖所有后续维度。
+
+\section{通用多维离线算法}
+
+\begin{algorithm}[H]
+\caption{Offline Empty Parent Key Generation}
+\begin{algorithmic}[1]
+\Require Dataset $D$, dimension order $\pi$, bit length $L$, master secret key $MSK$
+\Ensure Global empty parent key set $K$
+\State Initialize an empty prefix index $T$
+\For{each point $p \in D$}
+  \For{$i = 1$ to $d$}
+    \State $parent \gets$ prefixes of $p$ on dimensions $\pi_1,\ldots,\pi_{i-1}$
+    \State $value \gets p_{\pi_i}$
+    \State Insert $value$ into $T[parent,\pi_i]$
+  \EndFor
+\EndFor
+\State $K \gets \emptyset$
+\For{each indexed parent node $parent$ in $T$}
+  \State $i \gets$ next dimension after $parent$
+  \State $S \gets T[parent,\pi_i]$
+  \State $E \gets \textsc{CanonicalEmptyCover}([0,2^L-1] \setminus S)$
+  \For{each empty prefix $e \in E$}
+    \State $pattern \gets parent \parallel e \parallel *$ for all remaining dimensions
+    \State $sk \gets \textsc{M-HIBE.KeyGen}(MSK, pattern)$
+    \State $K \gets K \cup \{(pattern, sk)\}$
+  \EndFor
+\EndFor
+\State \Return $K$
+\end{algorithmic}
+\end{algorithm}
+
+\section{三维展开版}
+
+对于三维顺序 $X \rightarrow Y \rightarrow Z$，离线阶段维护两个索引：
+\[
+  I_X[X\text{-prefix}] = \{\text{Y values under this X-prefix}\},
+\]
+\[
+  I_{XY}[X\text{-prefix},Y\text{-prefix}] = \{\text{Z values under this }(X,Y)\text{-prefix}\}.
+\]
+
+\begin{algorithm}[H]
+\caption{3D Empty Parent Key Generation}
+\begin{algorithmic}[1]
+\Require 3D dataset $D$, order $X \rightarrow Y \rightarrow Z$, master secret key $MSK$
+\Ensure Global empty parent key set $K$
+\State Build indexes $I_X$ and $I_{XY}$ from all database points
+\State $K \gets \emptyset$
+\For{each $X$-prefix $p_x$}
+  \State $S_Y \gets I_X[p_x]$
+  \State $E_Y \gets \textsc{CanonicalEmptyCover}([0,2^L-1] \setminus S_Y)$
+  \For{each empty $Y$-prefix $p_y \in E_Y$}
+    \State $pattern \gets (p_x, p_y, *)$
+    \State $sk \gets \textsc{M-HIBE.KeyGen}(MSK, pattern)$
+    \State $K \gets K \cup \{(pattern, sk)\}$
+  \EndFor
+\EndFor
+\For{each indexed pair $(p_x,p_y)$}
+  \State $S_Z \gets I_{XY}[p_x,p_y]$
+  \State $E_Z \gets \textsc{CanonicalEmptyCover}([0,2^L-1] \setminus S_Z)$
+  \For{each empty $Z$-prefix $p_z \in E_Z$}
+    \State $pattern \gets (p_x, p_y, p_z)$
+    \State $sk \gets \textsc{M-HIBE.KeyGen}(MSK, pattern)$
+    \State $K \gets K \cup \{(pattern, sk)\}$
+  \EndFor
+\EndFor
+\State \Return $K$
+\end{algorithmic}
+\end{algorithm}
+
+\section{查询阶段派生算法}
+
+查询阶段不重新枚举数据库空间，也不重新生成全局父密钥。
+服务器只选择与查询范围相交的全局空区域父密钥，并将其裁剪、派生为查询范围内的空区域密钥。
+
+\begin{algorithm}[H]
+\caption{Query-Scoped Empty Key Derivation}
+\begin{algorithmic}[1]
+\Require Query range $Q$, global empty parent keys $K$
+\Ensure Query-scoped empty key set $K_Q$
+\State $K_Q \gets \emptyset$
+\For{each $(pattern, sk) \in K$}
+  \State $I \gets pattern \cap Q$
+  \If{$I = \emptyset$}
+    \State \textbf{continue}
+  \EndIf
+  \State $C \gets \textsc{CanonicalCover}(I)$
+  \For{each child pattern $c \in C$}
+    \State $child\_sk \gets \textsc{Derive}(sk,c)$
+    \State $K_Q \gets K_Q \cup \{(c, child\_sk)\}$
+  \EndFor
+\EndFor
+\State Optionally run $\textsc{SetCover}(K_Q)$ to remove redundant keys
+\State \Return $K_Q$
+\end{algorithmic}
+\end{algorithm}
+
+\section{简要说明}
+
+离线阶段的复杂度由真实数据形成的前缀结构决定，而不是由整个多维空间大小决定。
+对于三维顺序 $X \rightarrow Y \rightarrow Z$，每个数据点最多贡献 $O(L)$ 个 $X$ 前缀和 $O(L^2)$ 个 $(X,Y)$ 前缀，因此索引规模约为 $O(nL^2)$。
+查询阶段的成本主要取决于查询范围内空区域的可压缩覆盖数量，即最终需要派生的 query-scoped empty keys 数量。
+
+\end{document}

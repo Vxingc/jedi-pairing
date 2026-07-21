@@ -1,0 +1,1077 @@
+
+
+===== PAGE 1 =====
+实验结果
+数据集
+TPC-H的 lineitem 表⼦集
+每⼀⾏是⼀条订单中的商品明细记录，字段⽤ | 分隔，没有表头。
+字段结构
+TPC-H lineitem 标准字段顺序是：
+代码块
+0  l_orderkey 
+1  l_partkey 
+2  l_suppkey 
+3  l_linenumber 
+4  l_quantity 
+5  l_extendedprice 
+6  l_discount 
+7  l_tax 
+8  l_returnflag 
+9  l_linestatus 
+10 l_shipdate 
+11 l_commitdate 
+12 l_receiptdate 
+13 l_shipinstruct 
+14 l_shipmode 
+15 l_comment 
+例如第⼀⾏：
+代码块
+1|3104|170|1|17|17120.70|0.04|0.02|N|O|1996-03-13|... 
+当前M -HIBE实验⽤了哪些字段
+⼆维版本只⽤两个维度：
+代码块
+Coords[0] = l_shipdate 
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+1
+1
+
+===== PAGE 2 =====
+Coords[1] = l_discount * 100 
+也就是：
+代码块
+X 维：发货⽇期  shipdate 
+Y 维：折扣  discount 
+代码⾥：
+代码块
+p.Coords[0] = ParseDate(cols[10]) 
+dFloat, _ := strconv.ParseFloat(cols[6], 64) 
+p.Coords[1] = int64(dFloat * 100) 
+ParseDate 会把⽇期转成从 1992-01-01 起算的天数。
+例如：
+代码块
+1994-01-01 -> 某个整数  day offset 
+1994-12-31 -> 另⼀个整数  day offset 
+discount 原来是⼩数：
+代码块
+0.05, 0.06, 0.07 
+乘以100后变成整数：
+代码块
+5, 6, 7 
+这样⽅便映射成⼆进制前缀。
+当前查询条件
+代码⾥的查询是TPC-HQ6⻛格的⼀部分：
+2
+1
+2
+1
+2
+3
+1
+2
+1
+1
+
+===== PAGE 3 =====
+代码块shipdate in [1994-01-01, 1994-12-31] 
+discount in [5, 7] 
+也就是：
+代码块
+1994 年全年 
+折扣  0.05 到  0.07 
+当前输出⾥：
+代码块
+Query matched 5139 real records 
+表⽰有5139⾏满⾜这个⼆维范围查询。
+但这些记录会落到更少的唯⼀⼆维坐标上：
+代码块
+5139 matching rows collapsed into 1085 unique spatial points 
+原因是很多⾏可能有相同的：
+代码块
+(shipdate, discount) 
+例如多条订单明细都在同⼀天发货，并且折扣都是0.06。
+为什么查询空间是1095个点
+查询范围是：
+代码块
+365 天  × 3 个折扣值 
+即：
+代码块
+1
+2
+1
+2
+1
+1
+1
+1
+
+===== PAGE 4 =====
+365 × {5,6,7} = 1095 个⼆维点 
+实际数据占了：
+代码块
+1085 个唯⼀点 
+所以空点是：
+代码块
+1095 - 1085 = 10 
+这正好对应你的输出：
+代码块
+Query-Scoped Empty Regions: 10 
+10 empty-region keys cover 10 empty spatial points 
+这个数据集在实验⾥的作⽤
+它主要⽤于模拟⼀个外包数据库范围查询场景：
+代码块
+客⼾端查询某个多维范围 
+服务器返回命中的记录 
+同时给出证明： 
+  1. 返回的记录确实来⾃数据库 
+  2. 查询范围内没有遗漏其他记录 
+在当前代码⾥：
+•
+lineitem_120K.tbl 提供真实数据库点。
+•
+M-HIBE / WKD-IBE ⽤来证明查询范围内的空区域。
+•
+ZK accumulator ⽤来证明返回记录属于数据库。
+•
+空区域key⽤来证明完整性，也就是“没有漏掉查询范围内的数据”。
+复杂度
+1
+1
+1
+1
+2
+1
+2
+3
+4
+5
+
+===== PAGE 5 =====
+符号定义
+设：
+代码块
+N  = 数据库记录数 
+M  = 数据库中唯⼀多维点数 
+d  = 维度数 
+l  = 每维  bit ⻓度 
+U  = 2^l ，每维域⼤⼩ 
+Q  = 查询范围 
+K  = 查询返回记录⾏数 
+mQ = 查询范围内唯⼀真实点数 
+VQ = 查询范围体积 
+EQ = VQ - mQ ，查询范围内空点数 
+Cq = 查询范围  canonical cover 数 
+Gq = 查询触达的全局空⽗区域数 
+Sq = 最终  query-scoped empty key 数 
+当前实验⾥：
+代码块
+N  = 120515 
+d  = 2 
+l  = 12 
+K  = 5139 
+mQ = 1085 
+VQ = 1095 
+EQ = 10 
+Cq = 12 
+Gq = 60 
+Sq = 10 
+离线复杂度
+全库空区域索引构建：
+代码块
+Time:  O(N · l) 
+Space: O(M · l) 
+原因是每个数据点的X坐标会插⼊到所有X前缀节点：
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+1
+2
+
+===== PAGE 6 =====
+代块"", "0", "01", ..., full x 
+⼀共有 l+1 个前缀。
+如果离线真正物化所有全局空区域⽗key，复杂度⼤致是：
+代码块
+Time:  O(Gall · KeyGen) 
+Space: O(Gall · |SK|) 
+其中：
+代码块
+Gall = 全库全局空⽗区域数量 
+|SK| = ⼀个  WKD-IBE secret key ⼤⼩ 
+更细⼀点，⽣成全局空区域⽗节点前，需要对每个X前缀节点下的Y占⽤集合求空canonicalcover：
+代码块
+Time:  O(sum_v |Y_v| log |Y_v| + Gall) 
+Space: O(sum_v |Y_v| + Gall) 
+其中 v 是X前缀节点，Y_v 是该X前缀下出现过的Y值集合。
+当前实验⾥没有完整物化 Gall ，只构建了索引，并在查询时懒加载触达的⽗key，所以输出⾥写的
+是：
+代码块
+Global Empty Parent Key Material Touched 
+不是全库总keym aterial。
+在线查询复杂度
+查询canonicalcover：
+代码块
+Time:  O(d · l + Cq) 
+Space: O(Cq) 
+1
+1
+2
+1
+2
+1
+2
+1
+1
+2
+
+===== PAGE 7 =====
+⼆维时：
+代码块
+Cq = Cx · Cy 
+每个⼀维区间canonicalcover通常是 O(l) 。
+查找触达的全局空⽗区域：
+代码块
+Time:  O(Tx + Gq) 
+Space: O(Gq) 
+其中 Tx 是与查询X范围相交的X前缀节点数量。
+把全局空⽗区域裁剪到查询范围：
+代码块
+Time:  O(Gq · d · l + Sq) 
+Space: O(Sq) 
+W K D-IBE派⽣：
+代码块
+Time:  O(Pq · KeyGen + Sq · Delegate) 
+Space: O(Pq · |SK| + Sq · |SK|) 
+其中：
+代码块
+Pq = 本次查询实际触达的全局空⽗  key 数 
+Sq = 派⽣出的  query-scoped empty key 数 
+当前实验中：
+代码块
+Gq = 60 
+1
+1
+2
+1
+2
+1
+2
+1
+2
+1
+
+===== PAGE 8 =====
+Sq = 10 
+所以在线M -HIBE部分很⼩。
+ZKaccum ulator复杂度
+设返回结果⾏数是 K ，补集⼤⼩是 N-K 。
+当前成员证明⼤致可以按：
+代码块
+Commitment: O(N) 
+Prover:     O(K log K) 或  O(K) 到  O(K log K) ，取决于  accumulator/poly 实现 
+Verifier:   O(1) 或接近  O(1) 
+Proof size: O(1) 
+从实验结果看：
+代码块
+ZK Prover Time ≈  2.4s 
+Proof Size ≈  1.20 KB 
+Verifier Time ≈  2.3 ms 
+也就是说瓶颈主要在ZK prover，不在M -HIBE空区域派⽣。
+整体复杂度总结
+主⽅案可以写成：
+代码块
+Offline: 
+  Empty index build:     O(N · l) 
+  Empty parent key gen:  O(Gall · KeyGen) 
+  Accumulator setup:     O(N) 
+ 
+Online: 
+  Query cover:           O(d · l + Cq) 
+  Empty parent lookup:   O(Tx + Gq) 
+  Query intersection:    O(Gq · d · l + Sq) 
+  Empty key delegation:  O(Pq · KeyGen + Sq · Delegate) 
+  ZK proving:            O(K log K) / implementation-dependent 
+  ZK verification:       O(1) 
+2D
+2
+1
+2
+3
+4
+1
+2
+3
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+
+===== PAGE 9 =====
+[*]G lobalSetupTim e:4501.19m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100)
+[*]Loaded120000realTPC-Hrecords.
+[*]Querym atched5119realrecords.
+===DATABASEEM PTYINDEXSETU P===
+[+]DatabaseEm ptyIndexBuildTim e:36.71m s
+[+]IndexedX-PrefixNodes:5049
+===U PLOADSTAG E:SK IPPED===
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+===ENG INEA:2DM -HIBEX-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:12
+2.G lobalEm ptyParentRegions:60
+3.Query-ScopedEm ptyRegions:10
+4.CoverStrategy:offlineglobalem ptyparents+onlinequeryintersection/delegation
+5.PrefixExtractionTim e:3.52m s
+6.Query-RangeK eyM aterial:5.00K B
+7.G lobalEm ptyParentK eyM aterialTouched:1.88K B
+8.Query-ScopedEm ptyK eyM aterial:1.88K B
+9.W K D-IBEDelegationTim e:236.91m s
+->EngineATotal:240.43m s
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:239.7704m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]5119m atchingrowscollapsedinto1085uniquespatialpoints.
+ ->[Detail]10em pty-regionkeyscover10em ptyspatialpoints.
+
+===== PAGE 10 =====
+->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:1.
+ ->[Detail]10sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+[+]ZK Com m itm entTim e:23049.15m s
+[+]ZK ProverTim e:2511.63m s
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:2.62m s(SU CCESS!)
+===U LTIM ATEACADEM ICREPORT===
+Architecture:2DM -HIBEX-ParentSupplem entCover+ZK -Accum ulator(LightweightAuth)
+TotalSetupTim e:27550.35m s
+TotalServerProvingTim e:2752.06m s(2.75s)
+TotalClientVerificationTim e:242.39m s
+3D
+[*]G lobalSetupTim e:4322.05m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100),
+quantity[0,23]
+[*]Loaded120000realTPC-Hrecords.
+[*]Querym atched2327realrecords.
+===DATABASEEM PTYINDEXSETU P===
+[+]DatabaseEm ptyIndexBuildTim e:3875.06m s
+[+]IndexedX-PrefixParentNodes:5049
+[+]Indexed(X,Y)-PrefixParentNodes:155274
+===U PLOADSTAG E:SK IPPED===
+
+===== PAGE 11 =====
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+===ENG INEA:3DM -HIBEXY-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:24
+2.G lobalEm ptyParentRegions:20985
+3.Query-ScopedEm ptyRegions:4543
+4.CoverStrategy:offlineglobal(X,Y)-parentem pty-Zregions+onlinequery
+intersection/delegation
+5.PrefixExtractionTim e:10174.14m s
+6.Query-RangeK eyM aterial:14.27K B
+7.G lobalEm ptyParentK eyM aterialTouched:1737.30K B
+8.Query-ScopedEm ptyK eyM aterial:1553.73K B
+9.W K D-IBEDelegationTim e:69137.38m s
+->EngineATotal:79311.51m s
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:1662.6058m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]2327m atchingrowscollapsedinto2229uniquespatialpoints.
+ ->[Detail]4543em pty-regionkeyscover24051em ptyspatialpoints.
+ ->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:8.
+ ->[Detail]64sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+[+]ZK Com m itm entTim e:22251.37m s
+[+]ZK ProverTim e:1956.15m s
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:2.49m s(SU CCESS!)
+===U LTIM ATEACADEM ICREPORT===
+Architecture:3DM -HIBEXY-ParentSupplem entCover+ZK -Accum ulator(LightweightAuth)
+
+===== PAGE 12 =====
+TotalSetupTim e:26573.42m s
+TotalServerProvingTim e:81267.66m s(81.27s)
+TotalClientVerificationTim e:1665.09m s
+Ponegly
+2D
+代码块
+cargo test --package halo2-experiments --lib -- 
+sql::q6_2d_final_v1::tests::test_1 --exact --nocapture 
+running1test
+Num berofcolum ns:45
+testsql::q6_2d_final_v1::tests::test_1hasbeenrunningforover60seconds
+Tim etogenerateparam s56.191891755s
+Num berofcolum ns:45
+Tim etogeneratevk18.28329056s
+Num berofcolum ns:45
+Tim etogeneratepk14.849952182s
+Num berofcolum ns:45
+ProverTim e266.985772244s
+VerifierTim e42.274822m s
+testsql::q6_2d_final_v1::tests::test_1...ok
+testresult:ok.1passed;0failed;0ignored;0m easured;18filteredout;finishedin387.08s
+3D
+代码块
+export RUST_MIN_STACK=33554432 
+cargo test --package halo2-experiments --lib -- 
+sql::q6_final_v2::tests::test_1 --exact --nocapture 
+running1test
+1
+1
+2
+
+===== PAGE 13 =====
+Num berofcolum ns:56
+testsql::q6_final_v2::tests::test_1hasbeenrunningforover60seconds
+Tim etogenerateparam s57.872005707s
+Num berofcolum ns:56
+Tim etogeneratevk19.728859245s
+Num berofcolum ns:56
+Tim etogeneratepk26.194673179s
+Num berofcolum ns:56
+ProverTim e458.075726445s
+VerifierTim e50.84907m s
+testsql::q6_final_v2::tests::test_1...ok
+testresult:ok.1passed;0failed;0ignored;0m easured;18filteredout;finishedin600.34s
+Zk-acc
+2D
+[*]G lobalSetupTim e:4588.36m s
+[*]DataLoad+DirectPartitionTim e:156.74m s
+[*]Loaded120515realTPC-Hrows.
+[*]Querym atched5139rows,collapsedinto1085unique2Dpoints.
+[*]Fullcom pletenessem pty-setenum eration:10pointsin0.04m s
+[*]Com m itm entTim e(DB+DB\I):23345.97m s
+===PROOFA:ZK -M em bershipforCorrectness(IsubsetDB)===
+Prooftim e:2038.96m s
+Verifytim e:2.91m s
+Proofsize:1.20K B
+Status:true
+===PROOFB:ZK -NonM em bershipforFullCom pleteness(EdisjointDB)===
+[*]EcontainseveryquerypointnotreturnedbyI:|E|=10
+
+===== PAGE 14 =====
+[*]Realaggregationpadding:|E|10->16non-m em bers
+Prooftim e:68355.82m s
+Verifytim e:2.84m s
+Proofsize:1.32K B
+Status:true
+===FINALNATIVEZK -ACCU M U LATORREPORT===
+Architecture:2DNativeZK -Accum ulatorFullCorrectness+FullCom pletenessBaseline
+Querypartitionsanity|unique(I)|+|E|==|Q|:true
+Correctness(IsubsetDB):true
+Com pleteness(everypointinQ\Iisnon-m em berofDB):true
+Overallbaselinestatus:true
+Totalserverprovingtim e:93740.79m s(93.74s)
+Totalclientverificationtim e:5.75m s
+Totalproofsize:2.52K B
+3D
+[*]G lobalSetupTim e:4738.44m s
+[*]DataLoad+DirectPartitionTim e:194.19m s
+[*]Loaded120515realTPC-Hrows.
+[*]Querym atched2335rows,collapsedinto2235unique3Dpoints.
+[*]Fullcom pletenessem pty-setenum eration:24045pointsin13.99m s
+[*]Com m itm entTim e(DB+DB\I):24287.35m s
+===PROOFA:ZK -M em bershipforCorrectness(IsubsetDB)===
+Prooftim e:1889.55m s
+Verifytim e:2.59m s
+Proofsize:1.20K B
+Status:true
+===PROOFB:ZK -NonM em bershipforFullCom pleteness(EdisjointDB)===
+
+===== PAGE 15 =====
+[*]EcontainseveryquerypointnotreturnedbyI:|E|=24045
+[*]Realaggregationpadding:|E|24045->32768non-m em bers
+并⾏
+2D（20works）
+[*]G lobalSetupTim e:4374.07m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100)
+[*]Loaded120000realTPC-Hrecords.
+[*]Querym atched5119realrecords.
+===DATABASEEM PTYINDEXSETU P===
+[+]DatabaseEm ptyIndexBuildTim e:33.48m s
+[+]IndexedX-PrefixNodes:5049
+===U PLOADSTAG E:SK IPPED===
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+===ENG INEA:2DM -HIBEX-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:12
+2.G lobalEm ptyParentRegions:60
+3.Query-ScopedEm ptyRegions:10
+4.CoverStrategy:offlineglobalem ptyparents+onlinequeryintersection/paralleldelegation
+5.PrefixExtractionTim e:3.45m s
+6.Query-RangeK eyM aterial:5.00K B
+7.G lobalEm ptyParentK eyM aterialTouched:1.88K B
+8.Query-ScopedEm ptyK eyM aterial:1.88K B
+9.W K D-IBEDelegationTim e:33.88m s
+->EngineATotal:37.33m s
+
+===== PAGE 16 =====
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:35.6866m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]5119m atchingrowscollapsedinto1085uniquespatialpoints.
+ ->[Detail]10em pty-regionkeyscover10em ptyspatialpoints.
+ ->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:1.
+ ->[Detail]10sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+[+]ZK Com m itm entTim e:21682.13m s
+[+]ZK ProverTim e:2377.96m s
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:2.46m s(SU CCESS!)
+===U LTIM ATEACADEM ICREPORT===
+Architecture:2DParallelM -HIBEX-ParentSupplem entCover+ZK -Accum ulator(Lightweight
+Auth)
+TotalSetupTim e:26056.21m s
+TotalServerProvingTim e:2415.28m s(2.42s)
+TotalClientVerificationTim e:38.15m s
+2D（10works）
+[*]G lobalSetupTim e:4417.90m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100)
+[*]Loaded120000realTPC-Hrecords.
+[*]Querym atched5119realrecords.
+===DATABASEEM PTYINDEXSETU P===
+
+===== PAGE 17 =====
+[+]DatabaseEm ptyIndexBuildTim e:32.70m s
+[+]IndexedX-PrefixNodes:5049
+===U PLOADSTAG E:SK IPPED===
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+===ENG INEA:2DM -HIBEX-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:12
+2.G lobalEm ptyParentRegions:60
+3.Query-ScopedEm ptyRegions:10
+4.CoverStrategy:offlineglobalem ptyparents+onlinequeryintersection/paralleldelegation
+5.PrefixExtractionTim e:3.24m s
+6.Query-RangeK eyM aterial:5.00K B
+7.G lobalEm ptyParentK eyM aterialTouched:1.88K B
+8.Query-ScopedEm ptyK eyM aterial:1.88K B
+9.W K D-IBEDelegationTim e:41.38m s
+->EngineATotal:44.63m s
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:33.8755m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]5119m atchingrowscollapsedinto1085uniquespatialpoints.
+ ->[Detail]10em pty-regionkeyscover10em ptyspatialpoints.
+ ->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:1.
+ ->[Detail]10sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+[+]ZK Com m itm entTim e:22291.47m s
+[+]ZK ProverTim e:2404.99m s
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:2.50m s(SU CCESS!)
+
+===== PAGE 18 =====
+===U LTIM ATEACADEM ICREPORT===
+Architecture:2DParallelM -HIBEX-ParentSupplem entCover+ZK -Accum ulator(Lightweight
+Auth)
+TotalSetupTim e:26709.37m s
+TotalServerProvingTim e:2449.61m s(2.45s)
+TotalClientVerificationTim e:36.37m s
+2D（16works）
+[*]G lobalSetupTim e:4318.39m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100)
+[*]Loaded120000realTPC-Hrecords.
+[*]Querym atched5119realrecords.
+===DATABASEEM PTYINDEXSETU P===
+[+]DatabaseEm ptyIndexBuildTim e:34.34m s
+[+]IndexedX-PrefixNodes:5049
+===U PLOADSTAG E:SK IPPED===
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+===ENG INEA:2DM -HIBEX-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:12
+2.G lobalEm ptyParentRegions:60
+3.Query-ScopedEm ptyRegions:10
+4.CoverStrategy:offlineglobalem ptyparents+onlinequeryintersection/paralleldelegation
+5.PrefixExtractionTim e:3.50m s
+6.Query-RangeK eyM aterial:5.00K B
+7.G lobalEm ptyParentK eyM aterialTouched:1.88K B
+
+===== PAGE 19 =====
+8.Query-ScopedEm ptyK eyM aterial:1.88K B
+9.W K D-IBEDelegationTim e:36.08m s
+->EngineATotal:39.58m s
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:32.3231m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]5119m atchingrowscollapsedinto1085uniquespatialpoints.
+ ->[Detail]10em pty-regionkeyscover10em ptyspatialpoints.
+ ->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:1.
+ ->[Detail]10sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+[+]ZK Com m itm entTim e:22000.35m s
+[+]ZK ProverTim e:2412.58m s
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:2.34m s(SU CCESS!)
+===U LTIM ATEACADEM ICREPORT===
+Architecture:2DParallelM -HIBEX-ParentSupplem entCover+ZK -Accum ulator(Lightweight
+Auth)
+TotalSetupTim e:26318.74m s
+TotalServerProvingTim e:2452.16m s(2.45s)
+TotalClientVerificationTim e:34.67m s
+2D（30works）
+[*]G lobalSetupTim e:4634.72m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100)
+[*]Loaded120000realTPC-Hrecords.
+
+===== PAGE 20 =====
+[*]Querym atched5119realrecords.
+===DATABASEEM PTYINDEXSETU P===
+[+]DatabaseEm ptyIndexBuildTim e:37.42m s
+[+]IndexedX-PrefixNodes:5049
+===U PLOADSTAG E:SK IPPED===
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+===ENG INEA:2DM -HIBEX-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:12
+2.G lobalEm ptyParentRegions:60
+3.Query-ScopedEm ptyRegions:10
+4.CoverStrategy:offlineglobalem ptyparents+onlinequeryintersection/paralleldelegation
+5.PrefixExtractionTim e:3.34m s
+6.Query-RangeK eyM aterial:5.00K B
+7.G lobalEm ptyParentK eyM aterialTouched:1.88K B
+8.Query-ScopedEm ptyK eyM aterial:1.88K B
+9.W K D-IBEDelegationTim e:36.30m s
+->EngineATotal:39.64m s
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:35.9360m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]5119m atchingrowscollapsedinto1085uniquespatialpoints.
+ ->[Detail]10em pty-regionkeyscover10em ptyspatialpoints.
+ ->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:1.
+ ->[Detail]10sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+[+]ZK Com m itm entTim e:21821.25m s
+
+===== PAGE 21 =====
+[+]ZK ProverTim e:2406.60m s
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:2.42m s(SU CCESS!)
+===U LTIM ATEACADEM ICREPORT===
+Architecture:2DParallelM -HIBEX-ParentSupplem entCover+ZK -Accum ulator(Lightweight
+Auth)
+TotalSetupTim e:26455.97m s
+TotalServerProvingTim e:2446.24m s(2.45s)
+TotalClientVerificationTim e:38.35m s
+2D（50works）
+[*]G lobalSetupTim e:4387.36m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100)
+[*]Loaded120000realTPC-Hrecords.
+[*]Querym atched5119realrecords.
+===DATABASEEM PTYINDEXSETU P===
+[+]DatabaseEm ptyIndexBuildTim e:37.56m s
+[+]IndexedX-PrefixNodes:5049
+===U PLOADSTAG E:SK IPPED===
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+===ENG INEA:2DM -HIBEX-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:12
+2.G lobalEm ptyParentRegions:60
+3.Query-ScopedEm ptyRegions:10
+4.CoverStrategy:offlineglobalem ptyparents+onlinequeryintersection/paralleldelegation
+
+===== PAGE 22 =====
+5.PrefixExtractionTim e:3.50m s
+6.Query-RangeK eyM aterial:5.00K B
+7.G lobalEm ptyParentK eyM aterialTouched:1.88K B
+8.Query-ScopedEm ptyK eyM aterial:1.88K B
+9.W K D-IBEDelegationTim e:36.62m s
+->EngineATotal:40.12m s
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:32.8685m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]5119m atchingrowscollapsedinto1085uniquespatialpoints.
+ ->[Detail]10em pty-regionkeyscover10em ptyspatialpoints.
+ ->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:1.
+ ->[Detail]10sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+[+]ZK Com m itm entTim e:21712.03m s
+[+]ZK ProverTim e:2416.74m s
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:2.39m s(SU CCESS!)
+===U LTIM ATEACADEM ICREPORT===
+Architecture:2DParallelM -HIBEX-ParentSupplem entCover+ZK -Accum ulator(Lightweight
+Auth)
+TotalSetupTim e:26099.39m s
+TotalServerProvingTim e:2456.86m s(2.46s)
+TotalClientVerificationTim e:35.26m s
+2D（100works）
+[*]G lobalSetupTim e:4276.99m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+
+===== PAGE 23 =====
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100)
+[*]Loaded120000realTPC-Hrecords.
+[*]Querym atched5119realrecords.
+===DATABASEEM PTYINDEXSETU P===
+[+]DatabaseEm ptyIndexBuildTim e:34.11m s
+[+]IndexedX-PrefixNodes:5049
+===U PLOADSTAG E:SK IPPED===
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+===ENG INEA:2DM -HIBEX-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:12
+2.G lobalEm ptyParentRegions:60
+3.Query-ScopedEm ptyRegions:10
+4.CoverStrategy:offlineglobalem ptyparents+onlinequeryintersection/paralleldelegation
+5.PrefixExtractionTim e:3.57m s
+6.Query-RangeK eyM aterial:5.00K B
+7.G lobalEm ptyParentK eyM aterialTouched:1.88K B
+8.Query-ScopedEm ptyK eyM aterial:1.88K B
+9.W K D-IBEDelegationTim e:37.95m s
+->EngineATotal:41.52m s
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:34.9889m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]5119m atchingrowscollapsedinto1085uniquespatialpoints.
+ ->[Detail]10em pty-regionkeyscover10em ptyspatialpoints.
+ ->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:1.
+ ->[Detail]10sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+
+===== PAGE 24 =====
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+[+]ZK Com m itm entTim e:21810.67m s
+[+]ZK ProverTim e:2383.14m s
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:2.40m s(SU CCESS!)
+===U LTIM ATEACADEM ICREPORT===
+Architecture:2DParallelM -HIBEX-ParentSupplem entCover+ZK -Accum ulator(Lightweight
+Auth)
+TotalSetupTim e:26087.66m s
+TotalServerProvingTim e:2424.67m s(2.42s)
+TotalClientVerificationTim e:37.39m s
+3D（20works）
+[*]G lobalSetupTim e:4311.80m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100),
+quantity[0,23]
+[*]Loaded120000realTPC-Hrecords.
+[*]Querym atched2327realrecords.
+===DATABASEEM PTYINDEXSETU P===
+[+]DatabaseEm ptyIndexBuildTim e:3762.45m s
+[+]IndexedX-PrefixParentNodes:5049
+[+]Indexed(X,Y)-PrefixParentNodes:155274
+===U PLOADSTAG E:SK IPPED===
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+
+===== PAGE 25 =====
+===ENG INEA:3DM -HIBEXY-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:24
+2.G lobalEm ptyParentRegions:20985
+3.Query-ScopedEm ptyRegions:4543
+4.CoverStrategy:offlineglobal(X,Y)-parentem pty-Zregions+onlinequery
+intersection/paralleldelegation
+5.PrefixExtractionTim e:9999.80m s
+6.Query-RangeK eyM aterial:14.27K B
+7.G lobalEm ptyParentK eyM aterialTouched:1737.30K B
+8.Query-ScopedEm ptyK eyM aterial:1553.73K B
+9.W K D-IBEDelegationTim e:7439.06m s
+->EngineATotal:17438.86m s
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:155.5564m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]2327m atchingrowscollapsedinto2229uniquespatialpoints.
+ ->[Detail]4543em pty-regionkeyscover24051em ptyspatialpoints.
+ ->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:8.
+ ->[Detail]64sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+[+]ZK Com m itm entTim e:22262.60m s
+[+]ZK ProverTim e:1933.24m s
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:3.43m s(SU CCESS!)
+===U LTIM ATEACADEM ICREPORT===
+Architecture:3DParallelM -HIBEXY-ParentSupplem entCover+ZK -Accum ulator(Lightweight
+Auth)
+TotalSetupTim e:26574.39m s
+
+===== PAGE 26 =====
+TotalServerProvingTim e:19372.09m s(19.37s)
+TotalClientVerificationTim e:158.99m s
+3D（10works）
+[*]G lobalSetupTim e:4306.49m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100),
+quantity[0,23]
+[*]Loaded120000realTPC-Hrecords.
+[*]Querym atched2327realrecords.
+===DATABASEEM PTYINDEXSETU P===
+[+]DatabaseEm ptyIndexBuildTim e:4076.47m s
+[+]IndexedX-PrefixParentNodes:5049
+[+]Indexed(X,Y)-PrefixParentNodes:155274
+===U PLOADSTAG E:SK IPPED===
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+===ENG INEA:3DM -HIBEXY-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:24
+2.G lobalEm ptyParentRegions:20985
+3.Query-ScopedEm ptyRegions:4543
+4.CoverStrategy:offlineglobal(X,Y)-parentem pty-Zregions+onlinequery
+intersection/paralleldelegation
+5.PrefixExtractionTim e:10004.83m s
+6.Query-RangeK eyM aterial:14.27K B
+7.G lobalEm ptyParentK eyM aterialTouched:1737.30K B
+8.Query-ScopedEm ptyK eyM aterial:1553.73K B
+9.W K D-IBEDelegationTim e:10930.82m s
+
+===== PAGE 27 =====
+->EngineATotal:20935.65m s
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:235.9964m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]2327m atchingrowscollapsedinto2229uniquespatialpoints.
+ ->[Detail]4543em pty-regionkeyscover24051em ptyspatialpoints.
+ ->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:8.
+ ->[Detail]64sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+[+]ZK Com m itm entTim e:22236.73m s
+[+]ZK ProverTim e:1914.27m s
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:2.53m s(SU CCESS!)
+===U LTIM ATEACADEM ICREPORT===
+Architecture:3DParallelM -HIBEXY-ParentSupplem entCover+ZK -Accum ulator(Lightweight
+Auth)
+TotalSetupTim e:26543.22m s
+TotalServerProvingTim e:22849.92m s(22.85s)
+TotalClientVerificationTim e:238.53m s
+3D（16works）
+[*]G lobalSetupTim e:4602.14m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100),
+quantity[0,23]
+[*]Loaded120000realTPC-Hrecords.
+[*]Querym atched2327realrecords.
+
+===== PAGE 28 =====
+===DATABASEEM PTYINDEXSETU P===
+[+]DatabaseEm ptyIndexBuildTim e:4068.60m s
+[+]IndexedX-PrefixParentNodes:5049
+[+]Indexed(X,Y)-PrefixParentNodes:155274
+===U PLOADSTAG E:SK IPPED===
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+===ENG INEA:3DM -HIBEXY-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:24
+2.G lobalEm ptyParentRegions:20985
+3.Query-ScopedEm ptyRegions:4543
+4.CoverStrategy:offlineglobal(X,Y)-parentem pty-Zregions+onlinequery
+intersection/paralleldelegation
+5.PrefixExtractionTim e:10010.06m s
+6.Query-RangeK eyM aterial:14.27K B
+7.G lobalEm ptyParentK eyM aterialTouched:1737.30K B
+8.Query-ScopedEm ptyK eyM aterial:1553.73K B
+9.W K D-IBEDelegationTim e:8188.17m s
+->EngineATotal:18198.23m s
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:160.1295m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]2327m atchingrowscollapsedinto2229uniquespatialpoints.
+ ->[Detail]4543em pty-regionkeyscover24051em ptyspatialpoints.
+ ->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:8.
+ ->[Detail]64sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+
+===== PAGE 29 =====
+[+]ZK Com m itm entTim e:21986.66m s
+[+]ZK ProverTim e:1908.43m s
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:2.42m s(SU CCESS!)
+===U LTIM ATEACADEM ICREPORT===
+Architecture:3DParallelM -HIBEXY-ParentSupplem entCover+ZK -Accum ulator(Lightweight
+Auth)
+TotalSetupTim e:26588.80m s
+TotalServerProvingTim e:20106.66m s(20.11s)
+TotalClientVerificationTim e:162.55m s
+3D（30works）
+[*]G lobalSetupTim e:4397.22m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100),
+quantity[0,23]
+[*]Loaded120000realTPC-Hrecords.
+[*]Querym atched2327realrecords.
+===DATABASEEM PTYINDEXSETU P===
+[+]DatabaseEm ptyIndexBuildTim e:4571.32m s
+[+]IndexedX-PrefixParentNodes:5049
+[+]Indexed(X,Y)-PrefixParentNodes:155274
+===U PLOADSTAG E:SK IPPED===
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+===ENG INEA:3DM -HIBEXY-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:24
+
+===== PAGE 30 =====
+2.G lobalEm ptyParentRegions:20985
+3.Query-ScopedEm ptyRegions:4543
+4.CoverStrategy:offlineglobal(X,Y)-parentem pty-Zregions+onlinequery
+intersection/paralleldelegation
+5.PrefixExtractionTim e:10056.18m s
+6.Query-RangeK eyM aterial:14.27K B
+7.G lobalEm ptyParentK eyM aterialTouched:1737.30K B
+8.Query-ScopedEm ptyK eyM aterial:1553.73K B
+9.W K D-IBEDelegationTim e:7598.38m s
+->EngineATotal:17654.56m s
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:150.4932m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]2327m atchingrowscollapsedinto2229uniquespatialpoints.
+ ->[Detail]4543em pty-regionkeyscover24051em ptyspatialpoints.
+ ->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:8.
+ ->[Detail]64sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+[+]ZK Com m itm entTim e:22341.91m s
+[+]ZK ProverTim e:1975.42m s
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:2.64m s(SU CCESS!)
+===U LTIM ATEACADEM ICREPORT===
+Architecture:3DParallelM -HIBEXY-ParentSupplem entCover+ZK -Accum ulator(Lightweight
+Auth)
+TotalSetupTim e:26739.13m s
+TotalServerProvingTim e:19629.98m s(19.63s)
+TotalClientVerificationTim e:153.14m s
+
+===== PAGE 31 =====
+3D（50works）
+[*]G lobalSetupTim e:4299.32m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100),
+quantity[0,23]
+[*]Loaded120000realTPC-Hrecords.
+[*]Querym atched2327realrecords.
+===DATABASEEM PTYINDEXSETU P===
+[+]DatabaseEm ptyIndexBuildTim e:3985.31m s
+[+]IndexedX-PrefixParentNodes:5049
+[+]Indexed(X,Y)-PrefixParentNodes:155274
+===U PLOADSTAG E:SK IPPED===
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+===ENG INEA:3DM -HIBEXY-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:24
+2.G lobalEm ptyParentRegions:20985
+3.Query-ScopedEm ptyRegions:4543
+4.CoverStrategy:offlineglobal(X,Y)-parentem pty-Zregions+onlinequery
+intersection/paralleldelegation
+5.PrefixExtractionTim e:10079.03m s
+6.Query-RangeK eyM aterial:14.27K B
+7.G lobalEm ptyParentK eyM aterialTouched:1737.30K B
+8.Query-ScopedEm ptyK eyM aterial:1553.73K B
+9.W K D-IBEDelegationTim e:7420.57m s
+->EngineATotal:17499.61m s
+
+===== PAGE 32 =====
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:149.7147m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]2327m atchingrowscollapsedinto2229uniquespatialpoints.
+ ->[Detail]4543em pty-regionkeyscover24051em ptyspatialpoints.
+ ->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:8.
+ ->[Detail]64sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+[+]ZK Com m itm entTim e:22690.16m s
+[+]ZK ProverTim e:1919.87m s
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:2.46m s(SU CCESS!)
+===U LTIM ATEACADEM ICREPORT===
+Architecture:3DParallelM -HIBEXY-ParentSupplem entCover+ZK -Accum ulator(Lightweight
+Auth)
+TotalSetupTim e:26989.48m s
+TotalServerProvingTim e:19419.48m s(19.42s)
+TotalClientVerificationTim e:152.17m s
+3D（100works）
+[*]G lobalSetupTim e:4407.25m s
+[*]DataPath:/hom e/xing/poneglyphdb/src/data/lineitem _120K .tbl
+[*]RowLim it:first120000lineitem rows
+[*]QueryBounds:shipdate[1994-01-01,1994-12-31],encodeddiscount[5,7](scale=100),
+quantity[0,23]
+[*]Loaded120000realTPC-Hrecords.
+[*]Querym atched2327realrecords.
+===DATABASEEM PTYINDEXSETU P===
+
+===== PAGE 33 =====
+[+]DatabaseEm ptyIndexBuildTim e:3828.57m s
+[+]IndexedX-PrefixParentNodes:5049
+[+]Indexed(X,Y)-PrefixParentNodes:155274
+===U PLOADSTAG E:SK IPPED===
+[*]U se-upload-keystom aterializeW K D-IBEkeysforeverydatabaserow.
+===ENG INEA:3DM -HIBEXY-PARENTSU PPLEM ENT(Confidentiality&AccessControl)===
+1.QueryCanonicalRangeK eys:24
+2.G lobalEm ptyParentRegions:20985
+3.Query-ScopedEm ptyRegions:4543
+4.CoverStrategy:offlineglobal(X,Y)-parentem pty-Zregions+onlinequery
+intersection/paralleldelegation
+5.PrefixExtractionTim e:9949.33m s
+6.Query-RangeK eyM aterial:14.27K B
+7.G lobalEm ptyParentK eyM aterialTouched:1737.30K B
+8.Query-ScopedEm ptyK eyM aterial:1553.73K B
+9.W K D-IBEDelegationTim e:7453.59m s
+->EngineATotal:17402.93m s
+===ENG INEA:CLIENTCOM PLETENESSCHECK ===
+[+]ClientEm pty-K eyCheckTim e:174.8891m s(SU CCESS!Com pletekeycover.)
+ ->[Detail]2327m atchingrowscollapsedinto2229uniquespatialpoints.
+ ->[Detail]4543em pty-regionkeyscover24051em ptyspatialpoints.
+ ->[Detail]M axim um overlapm ultiplicityam ongselectedcoverblocks:8.
+ ->[Detail]64sam pledverificationkeyssuccessfullydecryptedsam e-patternW K D-IBE
+ciphertexts.
+===ENG INEB:ZK -ACCU M U LATOR(Authenticity)===
+[+]ZK Com m itm entTim e:22206.13m s
+[+]ZK ProverTim e:1898.45m s
+
+===== PAGE 34 =====
+[+]ZK ProofSize:0.91K B(M em )+0.29K B(Deg)=1.20K B
+[+]ClientZK VerifierTim e:2.44m s(SU CCESS!)
+===U LTIM ATEACADEM ICREPORT===
+Architecture:3DParallelM -HIBEXY-ParentSupplem entCover+ZK -Accum ulator(Lightweight
+Auth)
+TotalSetupTim e:26613.38m s
+TotalServerProvingTim e:19301.38m s(19.30s)
+TotalClientVerificationTim e:177.33m s

@@ -1,0 +1,608 @@
+
+
+===== PAGE 1 =====
+1
+Veriﬁable Multi-Dimensional Range Queries
+over Outsourced Datasets in Zero-Knowledge
+Yingjie Xue
+Abstract—In data outsourcing applications, a data owner
+outsources his/her dataset to a remote server who answers queries
+issued by a client. The server may return incorrect answers
+to the client, thus a method to verify the correctness of the
+answers is in need. We focus on veriﬁable multi-dimensional
+range queries which are fundamental queries in practice. In [1],
+Ghosh et al. proposed an efﬁcient method to support veriﬁable
+one-dimensional range queries for outsourced datasets of key-
+value pairs. Their approach is the ﬁrst to have a zero-knowledge
+property which means that the client cannot learn anything about
+the dataset beyond the answers to the queries. However, the
+approach that directly extends their technique to deal with multi-
+dimensional range queries is inefﬁcient, requiring Ω(2l) storage
+space of the server, where l is the length of the keys. In this study,
+we propose an efﬁcient approach for veriﬁable multi-dimensional
+range queries in zero-knowledge. Our construction is based
+on the multi-dimensional hierarchical identity-based encryption
+(M-HIBE) scheme. We ﬁrst propose an approach to deal with
+two-dimensional range queries. Our approach only introduces
+a multiplicative overhead of l over the storage complexity of
+[1]. Thus, our approach is efﬁcient. The generalization of the
+proposed approach to deal with d-dimensional range queries
+where d > 2 is promising.
+Index Terms —multi-dimensional range queries, zero-
+knowledge proof, multi-dimenisional hierarchical identity-based
+encryption, data outsourcing
+I. I NTRODUCTION
+Data outsourcing [2] is an emerging paradigm. It allows data
+owners to store, manage and disseminate their data in a cost-
+effective way. In this paradigm, data are outsourced to a third
+party who is responsible to host the data and provide a variety
+of functionalities, such as modiﬁcation and answering queries.
+Among those functionalities, range queries are fundamental
+which are motivated by many applications. For example, an
+internet service provider outsources the storage of network
+audit logs to an external service provider. An auditor may
+want to search the logs by querying network ﬂows whose dates
+and port numbers fall within certain ranges. For instance, the
+auditor may query for network ﬂows whose dates are within
+[01/Aug/2019,10/Oct/2019] and the port numbers are within
+[1, 1023]. Another example would be an individual who stores
+his/her emails on a remote server and a police may want to
+query for emails which are sent between certain periods.
+Since the answers to range queries are returned by a third
+party who is not trusted by the data owner, the third party
+may return incorrect answers. Thus, a mechanism to make the
+correctness of the answers veriﬁable is needed. In this study,
+we focus on supporting multi-dimensional range queries in
+a veriﬁable and privacy-preserving manner. The problem we
+address is formulated as follows.
+In data outsourcing applications, there are typically three
+parties. i.e. a data owner, a server and a client. The data owner
+outsources a datasetD to the server who hosts the outsourced
+dataset and answers multi-dimensional range queries issued
+by the client. The dataset D is modeled as a table containing
+n tuples and each tuple has d attribute values where d≥ 1.
+Assume each attribute value is an l-bit binary string. ∀i∈
+[1,d ], the ith attribute corresponds to the ith dimension. A d-
+dimensional range query is expressed as d intervals, i.e. [li,u i]
+for the ith dimension for i ranging from 1 to d.
+The answer to the range query is denoted as D′ which
+contains tuples whose values on the ith attribute fall within
+[li,u i] for all i∈ [1,d ]. To support multi-dimensional range
+queries in a veriﬁable and privacy-preserving manner, we need
+to make sure the following two requirements are satisﬁed.
+1) The correctness of the answer D′ is veriﬁable, which
+requires the server to provide proofs to the client.
+2) The proofs have zero-knowledge property which means
+the client learns nothing about D beyond the answer to
+the query.
+D′ is correct if both of the following conditions hold.
+• D′⊆D . This means D′ is a subset of original dataset
+outsourced by the data owner, thus D′ is not forged.
+• No tuple inD∩ ¯D′ satisﬁes the range query. That means
+all tuples satisfying the range query are in D′.
+To the best our knowledge, the work in [1] provides an
+efﬁcient solution for veriﬁable one-dimensional range queries
+in zero-knowledge for the ﬁrst time. Their construction is
+based on the hierarchical identity-based encryption (HIBE)
+[3] scheme. However, as the authors point out, the approach
+which directly extends their technique to multi-dimensional
+range queries is very inefﬁcient, since it requires Ω(2l) secret
+keys of HIBE to be stored by the server. Thus, designing an
+efﬁcient method to support veriﬁable multi-dimensional range
+queries in zero-knowledge is challenging.
+To address the problem, we come up with a solution based
+on the multi-dimensional hierarchical identity-based encryp-
+tion (M-HIBE) scheme which extends HIBE [3] to multiple
+dimensions. We ﬁrst propose an approach to deal with two-
+dimensional range queries. The number of secret keys stored
+by the server is O(nl2) which is only l times of that in [1].
+Therefore, our scheme is efﬁcient.
+The rest of this paper is organized as follows. In Sec-
+tion II, we introduce some related works on veriﬁable multi-
+dimensional range queries. The system model and security
+
+
+===== PAGE 2 =====
+2
+requirements are described in Section III. In Section IV, tech-
+nical preliminaries are presented. We introduce our proposed
+approach in Section V. Finally, the future work is given in
+Section VI.
+II. R ELATED WORK
+There are many researches conducted to support veriﬁable
+multi-dimensional range queries for outsourced data. Unfortu-
+nately, they do not have the zero-knowledge property. We list
+the information leakage of those works as follows.
+The leakage of the boundary information is common in
+previous works. Given a range query, the boundary information
+is the tuples that are just beyond the queried range. In [4],
+Martel et al. proposed an approach to support veriﬁable
+multi-dimensional range queries by extending one-dimensional
+Merkle hash trees to multiple dimensions. However, due to the
+construction of Merkle hash trees, the boundary information
+is leaked. There are some works addressing veriﬁable multi-
+dimensional range queries using signature chaining, such as
+[5–7]. Those approaches also leak the boundary information.
+Goodrich et al. constructed a scheme based on signature
+amortization which unfortunately also leaks the boundary
+information [8]. Yang et al. proposed a method to deal with
+veriﬁable two-dimensional range queries by utilizing an R∗-
+tree [9] and a structure of hash values similar to Merkle hash
+trees in [10], where the boundary information is also leaked.
+In [11], Chen et al. proposed a data structure called local bit
+matrices that allows a client to verify the correctness of a query
+result. However, their approach is similar to the signature
+chaining approach and thus it leaks the boundary information.
+In [12], Chen et al. designed a scheme based on canonical
+range trees which helps to verify the answers to multi-
+dimensional range queries without leaking boundary informa-
+tion. However, the client learns the number of tuples that
+are outside of the query range. In [13], Papadopoulos et
+al. proposed a method for the efﬁcient authentication of d-
+dimensional range queries via the combination of d separate
+1-dimensional proofs and via the set-operation protocol. Their
+approach lets the server send the partial results which only
+satisfy the queried range in one dimension to the client. The
+work in [14] is similar to that of [13], with the main difference
+being that they additionally support summation queries.
+The researches on zero-knowledge sets, e.g. [15–17], pro-
+vide techniques for zero-knowledge proofs. Their techniques
+allow the proofs of membership and non-membership of
+elements in sets to be zero-knowledge. However, it is not
+straightforward to construct proofs for the answers to multi-
+dimensional range queries using their techniques.
+The approaches proposed for multi-dimensional range
+queries over encrypted data are promising to provide alterna-
+tives to M-HIBE, such as [18–20]. Generally, their techniques
+allow a server to determine whether encrypted tuples satisfy
+the queried range. Particularly, in [18], Shi et al. proposed an
+approach which allows a decryption key corresponding to a
+range to decrypt any ciphertext intended for a tuple satisfying
+the range. Their approach works in a similar way of M-HIBE.
+However, the proofs constructed using their approach instead
+of M-HIBE cannot guarantee to be zero-knowledge.
+III. A DVERSARIAL MODEL AND SECURITY
+REQUIREMENTS
+The adversarial model and the security requirements in
+this work are the same as that of [1]. We brieﬂy review the
+adversarial model and security requirements in [1].
+A. Adversarial Model
+The model consists of three parties, i.e. a trusted data owner,
+an untrusted client, and an untrusted server. The data owner
+uploads his/her dataset D to the server and then goes ofﬂine.
+The server hosts the dataset and answers multi-dimensional
+range queries issued by the client. The server is untrusted since
+he/she wants to give incorrect answers without being detected.
+The client is also untrusted since he/she wants to know more
+information about the dataset beyond the answers to his/her
+current and previous range queries. Note that the server and
+the client are non-colluding. Otherwise, the client can know
+the whole dataset.
+B. Security Requirements
+We brief review the security requirements of [1] by describ-
+ing the following deﬁnitions conceptually rather than formally
+deﬁning them.
+• Completeness. For any dataset and any multi-dimensional
+range query, if the data owner and the server executes the
+protocol honestly, with probability 1, the client will be
+convinced of the correctness of the answer if the answer
+is correct.
+• Soundness. The server can convince the client of an
+incorrect answer with at most negligible probability.
+• Zero-Knowledge. The untrusted client cannot learn any-
+thing about the dataset beyond what he/she has queried.
+IV. P RELIMINARIES AND DEFINITIONS
+In this section, we give some preliminaries and deﬁnitions
+that are critical to our construction.
+A. Deﬁnitions of the canonical coverings of a range
+LetTl be a full binary tree of with l + 1 levels, where the
+root node (the level 0) is labeled NULL . The nodes at the
+ith level of the tree are i-bit binary strings from 0i to 2i− 1,
+from left to right. The leaf nodes are l-bit binary strings from
+0l to 2l− 1. Fig. 1 shows an example for T3. A range [a,b ]
+w.r.t.Tl is the set of contiguous leaf nodes who fall within
+[a,b ] where a,b are l-bit binary strings.
+The canonical covering of a range [a,b ] is the minimal set of
+nodes,P , ofTl such that (1) every leaf node in [a,b ] is equal to
+or is the descendant of one of the nodes in P ; (2) for any z∈
+P , in the subtree rooted at z, the leftmost leaf node (denoted
+as z(left)) and the rightmost leaf node (denoted as z(right)
+) satisfy [z(left),z (right)]⊆ [a,b ]. Note that the canonical
+covering of a range [a,b ] is unique. For example, inT3, the leaf
+nodes are{000, 001,··· , 111}. Given a range [001, 100], the
+canonical covering of [001, 100] is [001, 01, 100]. As shown
+in Fig. 1, the nodes surrounded by squares are the canonical
+coverings of the range [001, 100].
+
+
+===== PAGE 3 =====
+3
+Fig. 1: The Example of the Canonical Covering of
+the Range [001,100] in T3
+A method GetRoots(l, [a,b ],K[a,b]) is utilized to ﬁnd the
+union of the canonical coverings of a set of ranges. The
+algorithm takes a tree Tl with l + 1 levels, a range [a,b ], and
+a subset of keys denoted as K[a,b] ={k1,k 2,··· ,k m} where
+∀i∈ [1,m ], ki∈ [a,b ]. Assume the keys are in the ascending
+order.GetRoots(l, [a,b ],K[a,b]) outputs a set of nodes R that
+represents the union of the canonical coverings of the ranges
+[a,k 1− 1], [k1 + 1,k 2− 1],··· [km + 1,b ]. Given [a,b ], those
+ranges are created by K[a,b] and there is no key present in
+those ranges. Thus, we denote those ranges as empty ranges.
+B. Hierarchical Identity-Based Encryption(HIBE)
+We only care for the following property of HIBE which is
+important to our approach.
+Given a hierarchy of identities arranged in a tree where
+identities correspond to the nodes, a secret key corresponding
+to a node z in the tree can be only used to decrypt any
+ciphertext intended for a nodez′ which is a node in the subtree
+rooted at z.
+C. From HIBE to M-HIBE
+Ad-dimensional identity is denoted asID 1||ID 2||···|| ID d
+which is the concatenation of d identities.∀i∈ [1,d ], each
+ID i corresponds to the identity in the ith dimension. In each
+dimension, there is a hierarchy of identities arranged in a tree
+where identities correspond to the nodes, as in HIBE. The
+property of the multi-dimensional hierarchical identity-based
+encryption scheme (M-HIBE) is that, a secret key corresponds
+to ID 1||ID 2||···|| ID d can only be used to decrypt any
+ciphertext intended for ID′
+1||ID′
+2||···|| ID′
+d in which for i
+ranging from 1 to d, ID′
+i is a node in the subtree rooted at
+ID i.
+V. O UR PROPOSED APPROACH
+Since our proposed approach is closely related to that of
+[1], we ﬁrst review that construction as the preparation for
+our proposed approach.
+A. Review on Ghosh et al.s work
+Recall that the work in [1] addresses veriﬁable one-
+dimensional range queries over datasets of key-value pairs.
+LetD denote a dataset of key-value pairs where each key-
+value pair is denoted as (k,v ). Assume the keys inD areK =
+{k1,··· ,k n} with the keys in the ascending order. Denote
+[a,b ] as the queried range. Let D′ denote the answer to the
+range query which contains key-value pairs whose keys are in
+[a,b ].
+The proof of membership, i.e. D′⊆D , is straightforward
+so that we omit it. We concentrate on the protocol in [1] which
+is used for non-membership proof, that is, to prove that there
+is no (k′,v′)∈D∩ ¯D′ such that k′∈ [a,b ]. More intuitively,
+the non-membership proof is to prove that the keys in [a,b ]
+which are not present in D′ are not present in D.
+A trivial solution to the non-membership proof in zero-
+knowledge can be conducted as follows. For each key that
+is not present in D, the data owner generates a secret key
+corresponding to the key using HIBE and sends it to the
+server. Upon receiving the answer D′, the client generates
+the set of keys in [a,b ] which are not present in D′. The
+client asks for the proof of knowledge of the secret keys
+corresponding to the set of keys he/she generates. The server
+proves the knowledge of those secret keys by decrypting the
+set of ciphertexts intended for the set of keys. Note that each
+ciphertext is intended for one key.
+The set of keys that are not present in D can be represented
+by a set of ranges, so does the set of keys in [a,b ] which
+are not present in D′. Recall that HIBE allows a secret key
+correspond to a node z in the tree to can be only used to
+decrypt any ciphertext intended for a node z′ which is a node
+in the subtree rooted atz. Thus, for any range [α,β ], the secret
+keys corresponding to the nodes in the canonical covering of
+the range can be used to decrypt any ciphertext intended for
+a key (i.e. a leaf node) in that range. For any range [α,β ], the
+proof of knowledge of secret keys corresponding to the keys
+in [α,β ] can be replaced by the proof of knowledge of secret
+keys corresponding to the canonical coverings of [α,β ]. The
+proof of knowledge of secret keys corresponding to keys in
+a set of ranges can be replaced by the proof of knowledge
+of secret keys corresponding to the union of the canonical
+coverings of the set of ranges.
+By GetRoots(l, [0l, 2l− 1,b ],K), the data owner can ﬁnd
+a set of nodes R which represents the union of the canonical
+coverings of the corresponding empty ranges generated by K.
+ByGetRoots(l, [a,b ],K[a,b]), the client can ﬁnd a set of nodes
+R∗ which represents the union of the canonical coverings of
+the corresponding empty ranges generated by K[a,b] which
+denotes the keys present in the answer D′. Fig. 2 gives an
+illustration of the empty ranges generated byK andK[a,b]. We
+let the data owner generate secret keys corresponding to nodes
+in R and let the client ask for proof of knowledge of secret
+keys corresponding to nodes in R∗. Since each empty range
+generated by K[a,b] is a subset of one of the empty ranges
+generated by K, the data owner can prove the knowledge of
+secret keys corresponding to the nodes in R∗.
+Fig. 2: An Illustration of Empty Ranges
+
+
+===== PAGE 4 =====
+4
+B. Our proposed approach
+As the ﬁrst step, we construct a protocol for veriﬁable two-
+dimensional range queries in zero-knowledge using the similar
+technique in [1] while our construction is based on M-HIBE.
+We assume the datasetD is a table containing n tuples with
+two attributes. Every tuple is formulated as a data point (x,y )
+in the 2D (two-dimensional) plane, wherex,y are the values of
+the ﬁrst and second attribute of the tuple, respectively. Assume
+each value is an l-bit binary string from 0l to 2l− 1, similar
+to [1]. A 2D queried range is expressed as [a,b ]×[c,d ] which
+is a rectangle covering all points whose ﬁrst coordinate is in
+[a,b ] and the second coordinate is in [c,d ]. A correct answer
+should include all tuples (i.e. data points) inD in the rectangle
+[a,b ]×[c,d ]. We call the 2D queried range [a,b ]×[c,d ] as a 2D
+(queried) range or a region or as a rectangle interchangeably,
+based on the context. Note that we also view a point [a,b ]×
+[c,d ] where a = b,c = d or a line [a,b ]× [c,d ] where a =
+b,c ̸= d (or a̸= b,c = d) as rectangles (regions/2D ranges)
+for simplicity of description. Fig. 3 gives an example of the
+queried range [011001, 110111]×[001010, 101000] wherel =
+6.
+Fig. 3: An Illustration of the Queried Range
+Given the 2D queried range [a,b ]× [c,d ], we need to prove
+the non-membership of data points in [a,b ]× [c,d ] excluding
+the data points in the answer.
+Assume the answer to the query is D′ =
+{(x1,y 1), (x2,y 2),··· , (xm,y m)} with the ﬁrst coordinate in
+the ascending order. We assume each xi and yi are distinct
+for simplicity of description where i∈ [1,m ].
+Like [1], we divide the set of data points in [a,b ]× [c,d ]
+that are not present in the answer into a set ER∗ of disjoint
+empty regions, that is, [a,x 1−1]×[c,d ], [x1,x 1]×[c,y 1−1],
+[x1,x 1]× [y1 + 1,d ], [x1 + 1,x 2− 1]× [c,d ],··· , [xm +
+1,b ]× [c,d ]. Fig. 4 gives an example of those regions (the
+pink rectangles and the green lines), where the queried range is
+[011001, 110111]×[001010, 101000]. To explain, those regions
+are generated due to the following facts. (1) The ﬁrst coor-
+dinates presenting in the answer, i.e. {x1,x 2,··· ,x m}, show
+that the rectangles [a,x 1−1]×[c,d ], [x1+1,x 2−1]×[c,d ],··· ,
+[xm−1 + 1,x m− 1]× [c,d ], [xm + 1,b ]× [c,d ] are empty. (2)
+Based on the ﬁrst coordinates and second coordinates pre-
+senting in the answer, i.e. {(x1,y 1), (x2,y 2),··· , (xm,y m)},
+for every xi,i ∈ [1,m ], the answer shows that the lines
+[xi,x i]×[c,y i−1] and [xi,x i]×[yi+1,d ] are empty. Note that
+we only care for integers represented by l-bit binary strings in
+the 2D plane, thus there are some white spaces in Fig. 4 since
+the coordinates of data points in white spaces are not integers.
+Fig. 4: An Illustration of the Set of Empty Regions
+Based on the answerD′, the client need the server to prove
+that ER∗ (i.e. the set of empty regions) does not have data
+points inD. Like the adoption of canonical covering of a range
+for proofs in [1], we utilize the canonical covering of a 2D
+range [a,b ]× [c,d ] which is deﬁned as follows.
+We ﬁrst extend the node in the tree Tl (deﬁned in Section
+IV-A) to a 2D node and deﬁne it. Then, we deﬁne the canonical
+covering of a 2D range based on 2D nodes.
+Deﬁnition 1. The 2D node z||w: given two nodes z and w
+ofTl, the 2D node z||w is a presentation of the rectangle
+[z(left),z (right)]× [w(left),w (right)].
+Deﬁnition 2. The canonical covering of a 2D range [a,b ]×
+[c,d ]:
+Assume the canonical covering of the range [a,b ] is
+{u1,u 2,··· ,u s} whereui is a node in Tl,∀i∈ [1,s ]. Assume
+the canonical covering of the range [c,d ] is{v1,v 2,··· ,v t}
+where vj is a node in Tl,∀j ∈ [1,t ]. Then, the canonical
+covering of the 2D range [a,b ]× [c,d ] is the set S of 2D
+nodes denoted as S ={(ui||vj)}∀i∈[1,s],j∈[1,t]. ui||vj is the
+2D node which corresponds to the corresponding rectangle
+[ui(left),u i(right)]× [vj(left),v j(right)] .
+The rectangles represented by the 2D nodes are the full
+partition of the rectangle [a,b ]× [c,d ]. For example, for the
+2D range [001, 100]× [010, 110], the canonical covering of
+[001, 100] is {001, 01, 100} and the canonical covering of
+[010, 110] is{01, 10, 110}. Therefore, the canonical covering
+of [001, 100]× [010, 110] is{001||01, 001||10, 001||110,
+01||01, 01||10, 01||110, 100||01, 100||10, 100||110}, as shown
+by the green colored regions in Fig. 5. The white spaces do not
+contain any valid data points whose coordinates are integers,
+thus we do not care for it.
+Note that every 2D node ui||vj can be viewed as a 2D
+identity in M-HIBE, wherei∈ [1,s ],j ∈ [1,t ] . The secret key
+for this 2D node can be used to decrypt the ciphertext intended
+
+
+===== PAGE 5 =====
+5
+for any ui||vj where ui is a node in the subtree rooted at ui
+and at the same time vi is a node in the subtree rooted at vi.
+Fig. 5: An Illustration of the Canonical Covering of
+a 2D Range [001, 100]× [010, 110]
+Recall that ER∗ is the set of empty regions. Assume the
+data points inD is{(x1,y 1), (x2,y 2),··· , (xn,y n)} with the
+ﬁrst coordinate in the ascending order. Like [1], we let data
+owners generate ER with by the same principle of generating
+ER∗, with the given range [0l, 2l−1]×[0l, 2l−1]. LetQ∗ and
+Q be the union of the canonical coverings of the empty regions
+inER∗ andER respectively. We expect to transform the proof
+of non-membership of data points in regions in ER∗ to the
+proof of the knowledge of M-HIBE secret keys corresponding
+toQ∗. That is, iff the server can prove the knowledge of secret
+keys corresponding to Q∗, the client is convinced that the
+regions in ER∗ do not have points in D.
+Unfortunately, unlike [1] where each empty range generated
+by K is a subset of one of the empty ranges generated
+byK[a,b], an empty region in ER∗ generated by D′ in the
+2D environment is not always a subregion of one of the
+empty regions in ER generated by D. For example, assume
+D ={(x1,y 1), (x2,y 2),··· , (xn−1,y n−1)}, xn∈ [a,b ] and
+yn < c. With regard to xn−1 and xn, the data owner will
+generate secret keys for the canonical covering of the regions
+[xn−1,x n−1]×[0l,y n−1−1], [xn−1,x n−1]×[yn−1−1, 2l−1],
+[xn−1 + 1,x n− 1]× [0l, 2l− 1], [xn,x n]× [0l,y n− 1],
+[xn,x n]× [yn + 1, 2l− 1], and [xn + 1, 2l− 1]× [0l, 2l− 1].
+However, since (xn−1,y n−1) is the last data point in the
+answer, the client asks for proof of knowledge of secret keys
+corresponding to the canonical covering of [xn−1+1,b ]×[c,d ].
+Assume the canonical covering of [xn−1+1,b ] is{u1,··· ,u s}
+and the canonical covering of [c,d ] is {v1,··· ,v t}. Since
+xn ∈ [xn−1 + 1,b ], xn is a node in the subtree rooted at
+one of the nodes. e.g. uk where k ∈ [1,s ]. Since xn /∈
+[xn−1 +1,x n−1] andxn /∈ [xn +1,b ], theuk is not a node in
+the subtree rooted at any of the nodes in the canonical covering
+of [xn−1 + 1,x n− 1] or [xn + 1,b ]. If xn ̸= uk which is
+usually true, the server will not have the knowledge of secret
+keys for 2D nodes {uk||vj}∀j∈[1,t]. Thus, the server cannot
+convince the client of the non-membership of data points in
+[xn−1 + 1,b ]× [c,d ].
+To make the server have the of knowledge of secret
+keys corresponding to the canonical coverings of the region
+[xn−1,x n]×[c,d ], our solution is let the data owner leak more
+secret keys to the sever. As long as the data owner only leak
+secret keys for the canonical coverings of regions that do not
+have data points in D, the server cannot manage to let the
+client believe that a region that has data points does not have
+data points present in D.
+We observe that for ui, i∈ [1,s ], ui satisﬁes either of the
+following conditions:
+1) there is no data point in D whose ﬁrst coordinate is in
+the range [ui(left),u i(right)].
+2) there is one or more data points in D whose ﬁrst
+coordinates are in the range [ui(left),u i(right)].
+For any of the cases, the client asks for the proof of
+knowledge of secret keys corresponding to the canonical
+covering of the region [ui(left),u i(right)]×[c,d ]. If the ﬁrst
+condition holds for all ui where i∈ [1,s ], i.e. there is no
+(xn,y n) inD, the 2D range [xn−1 + 1,b ]× [0l, 2l− 1] should
+be inER and thus the secret keys for [xn−1+1,b ]×[0l, 2l−1]
+can be used to prove the knowledge of secret keys for
+[ui(left),u i(right)]×[c,d ], since [ui(left),u i(right)]×[c,d ]
+is a subregion of [xn−1 + 1,b ]× [0l, 2l− 1].
+If the second condition holds for some ui where i∈ [1,s ],
+at least there is some xn∈ [ui(left),u i(right)]. We want the
+server to have the knowledge of secret keys corresponding to
+the canonical covering of the region [ui(left),u i(right)]×
+[c,d ]. Since [ui(left),u i(right)]× [c,d ] is not a subregion in
+any region inER, we need to let the data owner ﬁnd an empty
+region of which [ui(left),u i(right)]× [c,d ] is a subregion
+and then generate secret keys corresponding to the canonical
+covering of that region. We deﬁne PR (ui) as a set of points
+inD whose ﬁrst coordinates are within [ui(left),u i(right)].
+Assume PR (ui) = {(x1,y 1)··· , (xm,y m)} where the ﬁrst
+coordinates are in the ascending order. Given the 2D range
+[ui(left),u i(right)]× [0l, 2l− 1], based on PR (ui), we
+generate a set ER′ of regions as [ui(left),u i(right)]×
+[0l,y 1− 1], [ui(left),u i(right)]× [y1 + 1,y 2− 1], ··· ,
+[ui(left),u i(right)]× [ym + 1, 2l− 1]. ER′ is generated by
+the similar principle of ER andER∗, with the difference that
+we generate empty rectangles by the second coordinates in
+PR (ui). If [ui(left),u i(right)]×[c,d ] is empty, there must be
+a region of which [ui(left),u i(right)]× [c,d ] is a subregion.
+We observe that each ui for which the second condition
+holds is the node that some xj is a descendant of or is equal
+to, where (xj,y j)∈D and j∈ [1,n ]. Therefore,∀j∈ [1,n ],
+we can do the above procedure for all the nodes which are
+ancestors of the ﬁrst coordinates present in D .
+For each empty region in ER, the server needs to store
+O(l2) secret keys. In ER, there are O(n) regions. Thus, the
+number of secret keys for ER is O(nl2).
+
+
+===== PAGE 6 =====
+6
+For each empty region in ER′, the server needs to store
+O(l) secret keys. For each ui which is an ancestor of a ﬁrst
+coordinate xj present inD, the number of regions in ER′ is
+O(|PR (ui|). In total, the number of regions in ER′ for all
+uis which are ancestors of the ﬁrst coordinates present in D
+isO(nl). Thus, the number of all empty regions is O(nl) and
+the server need to store O(nl2) secret keys.
+The total number of secret keys to be stored is O(nl2).
+VI. P ROPOSED WORK
+Our proposed work is as follows.
+1) Develop an efﬁcient construction of an M-HIBE scheme.
+The approach we have outlined in the previous section
+assumes the existence of a secure M-HIBE scheme.
+2) Prove that our approach satisﬁes the security require-
+ments.
+3) Analyze in detail the time and space complexity of the
+algorithms executed by each party and the space used by
+the proofs.
+4) Extend our construction to d-dimensional range queries
+for d> 2.
+5) Perform experiments to test the practical efﬁciency of our
+protocol using real-world datasets.
+REFERENCES
+[1] E. Ghosh, O. Ohrimenko, and R. Tamassia, “Efﬁ-
+cient veriﬁable range and closest point queries in zero-
+knowledge,” Proceedings on Privacy Enhancing Tech-
+nologies, vol. 2016, no. 4, pp. 373–388, 2016.
+[2] H. Hacıg ¨um¨us, B. Iyer, and S. Mehrotra, “Providing
+database as a service,” in Proc. of ICDE , 2002.
+[3] D. Boneh, X. Boyen, and E.-J. Goh, “Hierarchical iden-
+tity based encryption with constant size ciphertext,” in
+Annual International Conference on the Theory and
+Applications of Cryptographic Techniques . Springer,
+2005, pp. 440–456.
+[4] C. Martel, G. Nuckolls, P. Devanbu, M. Gertz, A. Kwong,
+and S. G. Stubblebine, “A general model for authenti-
+cated data structures,” Algorithmica, vol. 39, no. 1, pp.
+21–41, 2004.
+[5] W. Cheng, H. Pang, and K.-L. Tan, “Authenticating
+multi-dimensional query results in data publishing,” in
+IFIP Annual Conference on Data and Applications Se-
+curity and Privacy . Springer, 2006, pp. 60–73.
+[6] M. Narasimha and G. Tsudik, “Authentication of out-
+sourced databases using signature aggregation and chain-
+ing,” in International conference on database systems for
+advanced applications. Springer, 2006, pp. 420–436.
+[7] F. Chen and A. X. Liu, “Privacy-and integrity-preserving
+range queries in sensor networks,” IEEE/ACM Transac-
+[8] M. T. Goodrich, R. Tamassia, and N. Triandopoulos,
+“Efﬁcient authenticated data structures for graph con-
+nectivity and geometric search problems,” Algorithmica,
+vol. 60, no. 3, pp. 505–552, 2011.
+tions on Networking (TON) , vol. 20, no. 6, pp. 1774–
+1787, 2012.
+[9] N. Beckmann, H.-P. Kriegel, R. Schneider, and B. Seeger,
+“The r*-tree: an efﬁcient and robust access method for
+points and rectangles,” in Acm Sigmod Record , vol. 19,
+no. 2. Acm, 1990, pp. 322–331.
+[10] Y . Yang, S. Papadopoulos, D. Papadias, and G. Kol-
+lios, “Authenticated indexing for outsourced spatial
+databases,” The VLDB Journal , vol. 18, no. 3, pp. 631–
+648, 2009.
+[11] F. Chen and A. X. Liu, “Privacy and integrity preserving
+multi-dimensional range queries for cloud computing,”
+in 2014 IFIP Networking Conference . IEEE, 2014, pp.
+1–9.
+[12] H. Chen, X. Ma, W. Hsu, N. Li, and Q. Wang, “Access
+control friendly query veriﬁcation for outsourced data
+publishing,” in European Symposium on Research in
+Computer Security. Springer, 2008, pp. 177–191.
+[13] D. Papadopoulos, S. Papadopoulos, and N. Triandopou-
+los, “Taking authenticated range queries to arbitrary
+dimensions,” in Proceedings of the 2014 ACM SIGSAC
+Conference on Computer and Communications Security .
+ACM, 2014, pp. 819–830.
+[14] Y . Zhang, J. Katz, and C. Papamanthou, “Integridb:
+Veriﬁable sql for outsourced databases,” in Proceedings
+of the 22nd ACM SIGSAC Conference on Computer and
+Communications Security. ACM, 2015, pp. 1480–1491.
+[15] M. Chase, A. Healy, A. Lysyanskaya, T. Malkin, and
+L. Reyzin, “Mercurial commitments with applications to
+zero-knowledge sets,” in Annual International Confer-
+ence on the Theory and Applications of Cryptographic
+Techniques. Springer, 2005, pp. 422–439.
+[16] D. Catalano, D. Fiore, and M. Messina, “Zero-knowledge
+sets with short proofs,” in Annual International Confer-
+ence on the Theory and Applications of Cryptographic
+Techniques. Springer, 2008, pp. 433–450.
+[17] B. Libert and M. Yung, “Concise mercurial vector
+commitments and independent zero-knowledge sets with
+short proofs,” in Theory of Cryptography Conference .
+Springer, 2010, pp. 499–517.
+[18] E. Shi, J. Bethencourt, T. H. Chan, D. Song, and
+A. Perrig, “Multi-dimensional range query over en-
+crypted data,” in 2007 IEEE Symposium on Security and
+Privacy (SP’07). IEEE, 2007, pp. 350–364.
+[19] K. Chen, R. Kavuluru, and S. Guo, “Rasp: Efﬁcient mul-
+tidimensional range query on attack-resilient encrypted
+databases,” in Proceedings of the ﬁrst ACM conference
+on Data and application security and privacy . ACM,
+2011, pp. 249–260.
+[20] B. Wang, Y . Hou, M. Li, H. Wang, and H. Li, “Maple:
+scalable multi-dimensional range search over encrypted
+cloud data with tree-based index,” in Proceedings of
+the 9th ACM symposium on Information, computer and
+communications security. ACM, 2014, pp. 111–122.

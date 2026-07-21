@@ -1,0 +1,4 @@
+scheme,server_time_s,client_verify_ms,vo_size_kb,notes
+Pure ZK-Accumulator,7.90698,5.38,2.52,3D full correctness + full completeness baseline; trapdoor mode
+PoneglyphDB,,,,Fill with PoneglyphDB result under the same query and hardware
+Ours M-HIBE+ZK,39.95708,160.16,1569.20,Parallel 3D M-HIBE XY-parent cover + ZK accumulator; 20 workers

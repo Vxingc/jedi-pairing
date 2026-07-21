@@ -1,0 +1,7 @@
+dimension,scheme,setup_s,digest_s,correct_prove_s,complete_prove_s,total_prove_incl_digest_s,total_prove_excl_digest_s,verify_ms,estimated,notes
+2D,My Proposed,4.69154,24.21568,2.65761,0.25534,27.12863,2.91295,253.82,false,
+2D,PoneglyphDB,56.19189,,18.28329,14.84995,266.98577,266.98577,42.27482,false,"total proof time from table; vk/pk generation listed separately"
+2D,ZK-acc,4.58836,23.34597,2.03896,68.35582,93.74079,70.39478,5.75,false,
+3D,My Proposed,4.80978,24.99695,2.12552,87.40983,114.53230,89.53535,1878.93,false,
+3D,PoneglyphDB,57.87201,,19.72886,26.19467,458.07573,458.07573,50.84907,false,"total proof time from table; vk/pk generation listed separately"
+3D,ZK-acc,4.73844,24.28735,1.88955,139320.0,139344.28735,139321.88955,,true,"completeness proof estimated from 2D result as 38.7 hours"

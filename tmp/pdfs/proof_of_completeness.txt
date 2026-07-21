@@ -1,0 +1,287 @@
+
+
+===== PAGE 1 =====
+Proof of Completeness of Commitments
+A trivial solution as the ﬁrst step
+Note that the whole construction is based on the assumption that we can extend HIBE to
+M-HIBE, where the IDs of each dimension can be extended independently.
+At high level, when generalizing the commitments (indeed they are the decryption keys of
+HIBE) of Esha’s work from one-dimensional range queries to two-dimensional range queries, we
+should deal with both dimensions for every commitment. We assume that for each node x in the
+treeTl (full binary tree with l + 1 levels), there is another treeTl associated with the node x, where
+x is a node that can be represented by a binary string, as deﬁned in Esha’ work. To distinguish
+two types ofTl, we denote the ﬁrstTl as 1st−Tl, and the latter one as 2 nd−Tl(x) which associates
+with the node x of 1st−Tl. The root node in Tl is denoted as⊥.
+Denote x|y as the region (i.e. rectangle)[ x0··· 0  
+l−bit
+, x1··· 1  
+l−bit
+]× [y0··· 0  
+l−bit
+, y1··· 1  
+l−bit
+]. Denote each
+datum in the dataset D as a point P (kα, kβ). kα and kβ are binary strings representing 1 st
+and 2nd coordinates of the point, respectively. Each point P ’s 1st coordinate will be a non-empty
+leaf node in 1 st−T l. If a point P ’s 1st coordinate has the preﬁx x, then its 2 nd coordinate will
+be a non-empty leaf node in the tree 2 nd−T l(x). 2 nd−T l(x) indeed collects information about
+non-empty second coordinates of points in D that show up in x|⊥. For example, if l = 4, and we
+have three points P1(0010, 0000),P2(0011, 0010), P3(0001, 0011), P1 and P2’s 2nd coordinates (i.e.
+0000 and 0010) will be non-empty leaf nodes in the tree 2nd−Tl(001), since P1, P2’s ﬁrst coordinate
+has the preﬁx 001. The root nodes of 1 st−Tl and 2nd−Tl(x) are⊥ which represents the preﬁx for
+any binary string. When a commitment commit(x|y) is generated, it means the region is empty.
+The binary string before | denotes the commitment for the 1 st dimension, and the binary string
+after| denotes the commitment for the 2 nd dimension.
+The trivial solution is making commitments for all empty regions in each region [x0··· 0  
+l−bit
+, x1··· 1  
+l−bit
+]×
+[0l, 2l− 1], for all x in 1st−Tl. This process can be seen as collecting information of empty regions
+in each rectangle x|⊥ where x∈T l. It can be interpreted as follows. For all points that fall within
+x|⊥, ignore their ﬁrst coordinates , just focus on what second coordinates show up in that
+region. We ﬁnd the empty ranges of second coordinates based on the points in D falling within
+that region.
+Technically, for each nodex in 1st−Tl, let C(x) ={c1(x),··· , ci(x),··· , cs(x)} = GetRoots(l, [0l, 2l−
+1],K(x)[0l,2l−1]) (the algorithm GetRoots is the same as Esha’s, which outputs multiple rooti (de-
+noted as ci(x) in our work) for the union of canonical coverings of empty ranges), whereK(x)[0l,2l−1]
+is the set of coordinates which are represented by non-empty leaf nodes in the 2 nd−T l(x).
+Then we make commitments for all i∈ [1, s], where s is the number of nodes in C(x), and the
+format of the commitments is commit(x|ci(x)). x|ci(x) denotes the region [ x0··· 0  
+l−bit
+, x1··· 1  
+l−bit
+]×
+[ci(x)0··· 0  
+l−bit
+, ci(x)1··· 1  
+l−bit
+], and a commitment commit(x|ci(x)) denotes that the region is empty. If
+the 2 nd−T l(x) is empty, i.e. C(x) ={⊥}, then the commitment would be commit(x|⊥). x|bot
+denotes the region [ x0··· 0  
+l−bit
+, x1··· 1  
+l−bit
+]× [0l, 2l− 1].
+By those commitments made above, any challenge of proof x|y will be veriﬁed as true if the
+region represented by x|y is empty, since we have made commitments for empty regions inside the
+1
+
+
+===== PAGE 2 =====
+region [ x0··· 0  
+l−bit
+, x1··· 1  
+l−bit
+]× [0l, 2l− 1] for all x∈ 1st−T l. x|y must be a subregion of x|y′ where
+y′∈ C(x) and y′ is the preﬁx of y. Thus, commit(x|y) will be derived by commit(x|y′). If the
+region [ x0··· 0  
+l−bit
+, x1··· 1  
+l−bit
+]× [y0··· 0  
+l−bit
+, y1··· 1  
+l−bit
+] is not empty, the result of veriﬁcation cannot be true,
+since there must be at least one point in x|y whose second coordinate lies within [ y0··· 0  
+l−bit
+, y1··· 1  
+l−bit
+].
+There will not be a commit(x|y′) where y′ is a preﬁx of y due to this interception, just as in the
+one dimensional case.
+If we do the above procedures trivially, the size of commitments will be at least 2 l since we
+make commitments for each node in 1st−Tl. Then, in the following approach, we reduce the size of
+commitments to O(nl2), by the observation that for all x∈ 1st−Tl which is a suﬃx of z∈ 1st−Tl,
+the set{commit(x|⊥)}s can be reduced to one commitment commit(z|⊥).
+Description of the algorithm
+Preliminaries
+LetD denote the database. Each datum in D is denoted as ( kα, kβ, v), where kα, kβ are
+two keys used for range queries and v is a vector representing other values associated with this
+datum. We ignore v since it is not directly related to the 2D range query. Thus, each datum
+now is considered as a point. Let P denote a point, and Pi(kαi, kβi)∈D denote the point whose
+ﬁrst coordinate is kαi and the second coordinate is kβi,i∈ [1, n], where n is the total number of
+points in D. For each dimension, we use an l-bit binary string to represent the corresponding
+coordinate, thus a point will be represented by a 2 l-bit binary string. In each dimension, the range
+is [0l, 2l− 1]. Assume the points in D are sorted in the ascendant order ﬁrst by 1 st-dimension
+coordinate and then by 2 nd-dimension coordinate. In other words, we have Pi < Pj if kαi < kαj,
+or (kαi = kαj)∩ (kβi < kβj).
+Let x, y, z, a, b, kαi, kβi be binary strings to represent corresponding values from now on.
+Let pref(x) be the set of nodes inTl such that z∈ pref(x) if and only if z is a preﬁx of x. Let
+P R(x) be the set of points such that P R(x) ={Pi(kαi, kβi)∈D| x∈ pref(kαi), i∈ [1, n]}. Visually,
+P R(x) means the set of points inD who fall within x|⊥ since their ﬁrst coordinates have the preﬁx
+x. We redeﬁne the method GetRoots(l, [a, b],K[a,b]) of Esha’s work. First, we redeﬁne K[a,b].
+LetK(I, x) be a function which takes an indicatorI which indicates the dimension and a binary
+string x. I = 1 denotes the 1 st dimension and I = 2 denotes the 2 nd dimension. If I = 1, we
+ignore x.K(1, x) actually denotes the set of 1 st coordinates{kαi}i∈[1,n] of points inD, i.e.K(1,⊥)
+is the set of all non-empty leaf nodes in 1 st−Tl. If I = 2, the function takes P R(x) and the output
+is a set of 2 nd coordinates{kβi} of points in P R(x). In fact, K(2, x) represents all non-empty leaf
+nodes in 2 nd−Tl(x).ThenK(I, x)[a,b] means a subset of K(I, x) in which the coordinates also fall
+within [a, b].
+We now have GetRoots(l, [a, b],K(I, x)[a,b]) which runs the same as GetRoots(l, [a, b],K[a,b]).
+It returns a set of nodes that represents the union of the canonical coverings of the empty ranges
+according to the set of coordinates in K(I, x)[a,b].
+0.1 The process to generate commitments
+0.1.1 Data owner side
+We deﬁne two kinds of commitments as follows, based on the dimension we are focusing on.
+2
+
+
+===== PAGE 3 =====
+• Step 1. We focus on the ﬁrst dimension commitment, where the second dimension com-
+mitment is ﬁxed to ⊥ (the set of commitments is denoted as Commit(∗|⊥) ).In this phase,
+we ﬁnd all empty regions of the type ∗|⊥ which means no point lie within ∗|⊥. Let R =
+{c1,··· , ci,··· , cs} be the result returned by GetRoots(l, [0l, 2l− 1],K(1,⊥)[0l,2l−1]).
+Commit(∗|⊥) ={commit(c1|⊥),··· , commit(ci|⊥),··· , commit(cs|⊥)},
+where s is the number of nodes in R. Intuitively, each commitment commit(ci|⊥) indicates
+that the region [ ci0··· 0  
+l−bit
+, ci1··· 1  
+l−bit
+]× [0l, 2l− 1] is empty. Note that if there is no point in D,
+commit(⊥|⊥)∈ Commit(∗|⊥).
+• Step 2. We focus on the second dimension commitment, where the ﬁrst dimension commit-
+ment is ﬁxed to be x where x∈ 1st−Tl, and the commitment set is denoted as Commit(x|∗).
+Let Q(x) denote the result returned by GetRoots(l, [0l, 2l− 1],K(2, x)[0l,2l−1]). If Q(x) is
+{⊥}, we abort since x|⊥ is generated/can be derived in the previous phase. This
+is easy to understand since it means no point lie within x|⊥.
+For x of which Q(x) is not{⊥},
+Commit(x|∗) ={commit(x|d1),··· , commit(x|di),··· , commit(x|dt)},
+where di is a binary string representing a node in Q(x), and t is the number of nodes in Q(x).
+For example, if l = 4, and we have three points P1(0010, 0000),P2(0011, 0010), P3(0001, 0011).
+For x = 001,
+Commit(001|∗) ={commit(001|0001), commit(001|0011), commit(001|01), commit(001|1)},
+where the 2nd-dimension commitment{0001, 0011, 01, 1} is the union of canonical coverings of
+empty ranges in [0000, 1111] ,since P R(001) ={P1, P2} and 2nd-dimension coordinates of P1
+and P2 are (0000 and 0010). Note that x can be⊥. Note that commit(x|⊥) /∈ Commit(x|∗)
+since we abort if Q(x) is⊥.
+In fact, until now, we have described the whole story of the algorithm to generate commitments.
+That is, ﬁrst take all ﬁrst coordinates and generate Commit(∗|⊥). Then for any x∈T l, generate
+Commit(x|∗). Since if there is no point lie within x|⊥, it is not necessary to generate Commit(x|∗),
+we can skip the commitment generation for those xs. Indeed, we can predict which x we should
+skip before Step 2 by the result of Step 1. That is, if x is a suﬃx of nodes in R(returned by
+GetRoots(l, [0l, 2l− 1],K(1,⊥)[0l,2l−1])), obviously this x should be skipped. Indeed, another inter-
+pretation is that we only need to care x where there are some points whose ﬁrst coordinates have
+the preﬁx x.
+By the above description, we can also see the commitments generated by the algorithm is a
+more eﬃcient version of the commitments of the trivial solution.
+0.1.2 Client side
+However, we just described how the data owner generates commitment according to their
+knowledge of the dataset. Now we describe how the client generate challenges that they wants
+the server to prove. The challenge means the empty regions that the client sees according to the
+answers they get and the range they query.
+3
+
+
+===== PAGE 4 =====
+Assume the queried range is [a, b]×[c, d] and assume the canonical covering of [a, b] is{u1,··· , us}
+and the canonical covering of [c, d] is{v1,··· , vt}. We deﬁne the 2D variant of theGetRoots(l, [a, b],K(I, x)[a,b])
+algorithm, that is GetRoots(l, [a, b]× [c, d],K(I, x)[a,b]×[c,d]). Based on the deﬁnition we have for
+K(I, x), K(I, x)[a,b] is just a truncated version where the range in our vision is truncated to
+[a, b]× [c, d]. That means, K(1, x)[a,b]×[c,d] is the ﬁrst coordinates of set of points in D′ (i.e.the
+answer). Q = GetRoots(l, [a, b]× [c, d],K(1, x)[a,b]×[c,d]) will return the union of the canonical cov-
+erings of empty ranges in [ a, b] based onK(1, x)[a,b]×[c,d] . The client will challenge on ci|vj (we will
+explain in the next section why this is the case) for all ci∈ Q, j∈ [1, t]. For each point P′
+i inD′,
+we denote the ﬁrst coordinate of the point as x′
+i,K(2, x′
+i)[a,b]×[c,d] is set of the second coordinates
+of points inD′ falling with x′
+i|[c, d]. Q′(xi) = GetRoots(l, [a, b]× [c, d],K(2, x′
+i)[a,b]×[c,d]) will return
+the union of the canonical coverings of empty ranges in [ c, d] based on K(2, x′
+i)[a,b]×[c,d] . For each
+x′
+i, The client will challenge on x′
+i|dj for all dj∈ Q′(x′
+i). Note that xi indeed are non-empty leaf
+nodes inTl in the range [ a, b].
+How to prove a region is empty
+Assume the client asks to prove a region [xlo, xhi]×[ylo, yhi] is empty, where xlo, xhi, ylo, yhi are
+l-bit binary strings representing the corresponding coordinate.
+Assume{c1, c2, c3} is the canonical covering of the range [ xlo, xhi] ,where ci is a binary string,
+i∈ [1, 3] and{d1, d2, d3} is the canonical covering of the range [ ylo, yhi], where di is a binary string,
+i∈ [1, 3], the query for the proof should be{c1, c2, c3}×{d1, d2, d3}, i.e. c1|d1,c1|d2,c1|d3,c2|d1,c2|d2,c2|d3,
+c3|d1,c3|d2,c3|d3.
+In general, we make the following statement.
+Statement: Given a region [ xlo, xhi]× [ylo, yhi], and C ={c1,··· , ci,··· , cs} is the canonical
+covering of the range [ xlo, xhi], D ={d1,··· , dj,··· , dt} is the canonical covering of the range
+[ylo, yhi], then the region can be represented by the union of {ci|dj} for all ci∈ C, dj ∈ D, i∈
+[1, s], j∈ [1, t]. s, t are the number of nodes in the corresponding set, respectively.
+Proof: We can split the region by 1 st-dimension coordinate and 2 nd-dimension coordinate.
+Firstly, we split the region by 1 st-dimension coordinate. That is, the range of the 1 st-dimension
+[xlo, xhi] can be represented by the union of {ci} where ci∈ C, i∈ [1, s]. Then, the region can
+be represented by the union of the subregions [ ci0··· 0  
+l−bit
+, ci1··· 1  
+l−bit
+]× [ylo, yhi],i∈ [1, s]. Then, we
+split each subregion by 2 nd dimension coordinate. The range [ ylo, yhi] can be represented by D =
+{d1,··· , dj,··· , dt}. Thus, for each subregion, it can be divided to subsubregions [ci0··· 0, ci1··· 1]×
+[dj0··· 0, dj1··· 1], which is ci|dj(where i∈ [1, s], j∈ [1, t]). Thus, we complete the proof.
+To ask for a proof that the region [ xlo, xhi]× [ylo, yhi] is empty, ﬁrst the client will generate
+canonical coverings of the ranges in each dimension, denoted as C and D, for each dimension
+respectively. Then, the client combines each node ci∈ C with each canonical node dj ∈ D to
+form the subregion ci|dj. The client asks for proofs for each subregion. The size of proof for each
+rectangle will be O(l2).
+Recall that in the previous section, we let the client challenge on ci|vj for all ci∈ Q, j∈ [1, t]
+.They are indeed the canonical coverings of the rectangles ci|[c, d].
+Proof of Completeness of Commitments
+The completeness of commitments means, for any query for a proof of p|q, where p, q are
+binary strings, if the region represented by p|q is empty, we can ﬁnd a commitment commit(p′|q′)
+4
+
+
+===== PAGE 5 =====
+to generate a proof for p|q, with 100% certainty. p′, q′ is the preﬁx of p, q respectively. Note that
+⊥ is the preﬁx for any string.
+We prove it by two steps. We assume the whole region [0 l, 2l− 1]× [0l, 2l− 1] is not empty,
+which means there is no commit(⊥|⊥). If the whole region is empty, a commit(⊥|⊥) is suﬃcient
+to generate all proofs.
+Step 1
+In this step, we prove that if we generate commitments on each node x (the trivial solution) of
+the full binary tree 1 st−Tl, as Commit′(x|∗), we will deﬁnitely ﬁnd a commitment commit(p′|q′).
+Statement: For any challenge on p|q, where p, q are binary strings, if the region p|q
+is empty, then there must be a commitment commit(p|q′)∈ Commit′(p|∗) that q′ is the
+preﬁx of q.
+Proof: Let Q(p) be the output of GetRoots(l, [0l, 2l− 1],K(2, p)[0l,2l−1]), denoted as Q(p) =
+{d1, d2,··· , di,··· , dt} is the canonical coverings of empty ranges based on the second coordinates
+of points in D. Commit′(p|∗)={commit(p|d1),··· , commit(p|di),··· , commit(p|dt)}. By the def-
+inition of canonical covering of the range, if the region p|q is empty, then there must be some
+di = q′∈ Q(p), which is the preﬁx of q. That means commit(p|q′)∈ Commit′(p|∗).
+Step 2
+We will now show that the two types of commitments, i.e. Commit(x|∗), and Commit(∗|⊥)
+is suﬃcient to generate all Commit′(x|∗) in the ﬁrst step, for all x in the full binary tree.
+The proof is obvious. For x∈T l where there are no point inD falling in x|⊥, the commitment
+commit(x|⊥) can be derived by a Commit(z|⊥) where z∈ GetRoots(l, [0l, 2l− 1],K(1, x)[0l,2l−1]),
+since z is a node in the canonical covering of the empty ranges for ﬁrst coordinates. Thus, we can
+use Commit(∗|⊥) type commitments to cover commit(x|⊥) where there are no point in D falling
+in x|⊥. For x∈T l where there are at least one point falling within x|⊥, the Commit(x|∗) type
+commitments which are exactly the same as the commitments in the trivial solution. Thus, the two
+types of commitments Commit(x|∗), and Commit(∗|⊥) are suﬃcient to generate commitments as
+in the trivial solution.
+Complexity Analysis
+There are two types of commitments. Commit(∗|⊥) and Commit(x|∗).
+The number of commitments in Commit(∗|⊥) is O(nl), since there are O(n) diﬀerent empty
+ranges and each range should be represented with O(l) nodes.
+Now let us compute the number of commitments inCommit(x|∗)| with respect to x. If there are
+m points falling within x|⊥, the number of nodes inGetRoots(l, [0l, 2l−1],K(2, x)[0l,2l−1]) are O(ml).
+For each level of the treeTl, e.g. the ith level, for each node y in that level,|Commit(y|∗)| = O(myl)
+where my means the number of points falling within y|⊥. In total, for all y in the i th layer, the sum
+of commitments Commit(y|∗)y in ith level is O(nl) since each point can only show up in one region
+once. That holds for each layer. In total, there are l + 1 layers, thus, the sum of Commit(x|∗) type
+commitments are O(nl2).
+In total, the complexity for storage of commitments is O(nl2)
+Similarly, from the perspective of the client, the number of challenge they need to issue is
+O(mD′l2) where mD′ is the number of points in the answer, since they ﬁnd O(mD′) rectangles and
+each rectangles can be represented by O(l2).
+5
+
+
+===== PAGE 6 =====
+1 Generalize to d≥ 2
+By the same principle, for example when d = 3, we can ﬁrst only consider the ﬁrst coordinates
+generate Commit(∗|⊥|⊥), and then ﬁx the ﬁrst coordinate to generate two types of commitments
+as in 2D case.
+6
