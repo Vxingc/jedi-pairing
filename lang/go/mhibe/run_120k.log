@@ -1,0 +1,67 @@
+nohup: ignoring input
+[*] Starting ULTIMATE ARCHITECTURE Benchmark...
+[*] Mode: 4D Query-Independent Offline Fixed-Order Parent Supplement + Full Parallel Protocol
+[*] Full Parallel Workers: 32
+[*] Per-dimension bit widths: dim0=12 dim1=4 dim2=6 dim3=4  (total=26)
+[*] Parent-expand dims: dim0=true dim1=true dim2=false dim3=false
+[*] -skip-zk set: skipping accumulator SRS load
+[*] Global Setup Time: 134.51 ms
+
+[*] Data Path: /home/xing/poneglyphdb/src/data/lineitem_120K.tbl
+[*] Row Limit: first 1200 lineitem rows
+[*] Query Bounds (4D encoded coordinates):
+    dim0 [731, 1095]  (bitwidth=12)
+    dim1 [5, 7]  (bitwidth=4)
+    dim2 [0, 23]  (bitwidth=6)
+    dim3 [2, 6]  (bitwidth=4)
+[*] Loaded 1200 real TPC-H records.
+[*] Query matched 16 real records.
+
+=== QUERY-INDEPENDENT DATABASE OFFLINE INITIALIZATION ===
+[+] Dsignal: terminated
+ Build Time: 820.48 ms
+[+] Database-Wide Empty Region Enumeration Time: 8696.50 ms
+[+] Database-Wide Parent Key Generation Time: 77607.32 ms
+ -> Offline Initialization Total: 87124.30 ms
+[+] Empty Index Mode: complete-domain fixed-order parent occupancy
+[+] Indexed Database-Wide Parent Nodes: 83178
+[+] Database-Wide Global Empty Parent Regions: 20218
+[+] Database-Wide Parent Key Material: 17731.23 KB
+[+] Query Dependency: NONE (offline domain is fixed to the complete encoded space)
+
+=== UPLOAD STAGE: SKIPPED ===
+[*] Use -upload-keys to materialize WKD-IBE keys for every database row.
+
+=== ENGINE A: 4D M-HIBE FIXED-ORDER PARENT SUPPLEMENT (Confidentiality & Access Control) ===
+    [Trace] Starting query intersection/maximal crop...
+    [Trace] Query intersection/maximal crop: 166.82 ms (870 scoped candidates)
+    [Trace] Starting candidate bitset construction...
+    [Trace] Candidate bitset construction: 203.69 ms (870 candidates, 131384 empty points)
+    [Trace] Starting incremental greedy cover...
+    [Trace] Incremental greedy cover: 532.50 ms (378 selected)
+1. Query Canonical Range Keys: 72
+2. Database-Wide Global Empty Parent Regions Available: 20218
+3. Query-Scoped Empty Regions: 378
+4. Cover Strategy: query-independent database-wide parents + full parallel online intersection/delegation
+5. Prefix Extraction Time: 903.70 ms
+6. Query-Range Key Material: 45.26 KB
+7. Global Empty Parent Key Material Total: 17731.23 KB
+8. Global Empty Parent Key Material Touched: 209.46 KB
+9. Query-Scoped Empty Key Material: 218.76 KB
+10. WKD-IBE Delegation Time: 1251.36 ms
+-> Engine A Total: 2155.07 ms
+
+=== ENGINE A: CLIENT PROTOCOL COMPLETENESS CHECK ===
+[+] Client Protocol Geometric Completeness Time: 14.0439 ms (SUCCESS! Complete key cover.)
+    -> [Detail] 16 matching rows collapsed into 16 unique spatial points.
+    -> [Detail] 378 empty-region keys cover 131384 empty spatial points.
+    -> [Detail] Maximum overlap multiplicity among selected cover blocks: 4.
+
+=== ENGINE B: SKIPPED ===
+
+=== ULTIMATE ACADEMIC REPORT ===
+Architecture: 4D Query-Independent Offline M-HIBE + Full Parallel Protocol + ZK-Accumulator
+Total Setup Time: 87258.81 ms
+Total Server Proving Time: 2155.07 ms (2.16 s)
+Total Client Protocol Verification Time: 14.04 ms
+Total Protocol Time: 89427.92 ms

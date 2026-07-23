@@ -69,6 +69,41 @@ type OfflineEmptyMaterial struct {
 	ParentKeyBytes int
 }
 
+// OfflineTiming captures a parallel-vs-serial breakdown of the three offline
+// sub-phases so the "pure serial residual" (the Amdahl-law lower bound that
+// adding cores cannot reduce) can be reported separately from the work that
+// scales with core count. Populated by the offline functions and printed by
+// main(). A single benchmark process never runs these phases concurrently, so
+// plain (unsynchronised) fields are safe here.
+type OfflineTiming struct {
+	// Phase 1 — buildNDPrefixOccupancyIndex
+	IndexParallelBuildMs float64 // parallel: per-worker shard construction
+	IndexSerialMergeMs   float64 // SERIAL: merge W shards into one map
+
+	// Phase 2 — buildQueryTouchedGlobalEmptyRegionsND
+	RegionParallelMs         float64 // parallel: recursion fanned out over dim-0 nodes
+	RegionSerialAggregateMs  float64 // SERIAL: gather per-worker results + final maximal pass
+	RegionSerialDedupeSortMs float64 // SERIAL: dedupe+sort inside the final pass (subset of aggregate)
+
+	// Phase 3 — deriveGlobalEmptyParentKeysOffline
+	ParentParallelKeyGenMs float64 // parallel: WKD-IBE KeyGen for every region
+	ParentSerialAssembleMs float64 // SERIAL: map assembly + Marshal byte counting
+	ParentSerialMarshalMs  float64 // SERIAL: Marshal(true) byte counting only (subset of assemble)
+}
+
+var offlineTiming OfflineTiming
+
+// dryRunCounting, when true, makes buildQueryTouchedGlobalEmptyRegionsND tally
+// the raw (pre-maximal) empty-cover count emitted at each recursion level into
+// dryRunLevelRawCounts[nextDim]. Set only by the -dry-run-count mode, which
+// enumerates regions with the abort cap disabled and exits before key
+// generation, so the true per-level and maximal region counts can be observed
+// without hitting -max-global-regions or paying for WKD-IBE KeyGen.
+var (
+	dryRunCounting      bool
+	dryRunLevelRawCounts [NumDims]int64
+)
+
 func fullDomainQuery() RangeQuery {
 	var query RangeQuery
 	maxDomain := int64(1<<BitLength) - 1
@@ -288,55 +323,140 @@ func prefixesForValueIntersectingQuery(value, queryMin, queryMax int64) []string
 	return prefixes
 }
 
-func parentCacheKey(nextDim int, parentPrefixes []string) string {
-	return fmt.Sprintf("%d::%s", nextDim, strings.Join(parentPrefixes, "||"))
+// -----------------------------------------------------------------------
+// Fast integer-keyed EmptyIndexND
+//
+// Root cause of the two-hour hang: the original parentCacheKey used
+// fmt.Sprintf+strings.Join, which allocates a new string on every call.
+// For N=500K rows with maxParentDim=4, level-3 alone triggers ~1.2 billion
+// allocations (N × 13³), completely saturating the GC.
+//
+// Fix: replace string keys with packed uint64 keys, and replace []uint16
+// (sorted insert = copy on every add) with a 64-word [64]uint64 bitmap
+// (domain 0..4095 = 4096 bits = 512 B).  The hot loop becomes a single
+// array-index write — zero heap allocation per point.
+//
+// Key encoding for level L (L parent prefixes each 0..12 bits long):
+//   Each prefix is stored as (length << 12 | value) in 17 bits.
+//   Up to 3 parent prefixes packed into a uint64:
+//     bits 0-16:  dim0 prefix  (len 0-12, val 0-4095)
+//     bits 17-33: dim1 prefix
+//     bits 34-50: dim2 prefix
+//   The nextDim index (1-3) is packed into bits 51-52.
+// -----------------------------------------------------------------------
+
+// prefixToCode encodes a prefix string to a 17-bit integer (len<<12 | value).
+// prefix is a string of '0'/'1' chars, length 0..BitLength.
+func prefixToCode(prefix string) uint32 {
+	var val uint32
+	for _, c := range prefix {
+		val = (val << 1)
+		if c == '1' {
+			val |= 1
+		}
+	}
+	return (uint32(len(prefix)) << 12) | val
 }
 
-// -----------------------------------------------------------------------
-// D2: compact EmptyIndexND
-//
-// Original: map[string]map[int64]struct{}
-//   inner map overhead: ~128 B per bucket (Go map header + 8-entry bucket)
-//   plus 16 B per int64 key in the map
-//
-// Compact: map[string][]uint16  (domain 0..4095 fits in uint16)
-//   values kept sorted; duplicates discarded on insert via sortedUint16Insert.
-//   Memory per value: 2 B (uint16) vs ~16+ B.  ~8–30× reduction.
-// -----------------------------------------------------------------------
+// packIndexKey packs up to 3 parent prefix codes and the nextDim into a uint64.
+func packIndexKey(nextDim int, codes []uint32) uint64 {
+	var k uint64
+	for i, c := range codes {
+		k |= uint64(c) << (17 * uint(i))
+	}
+	k |= uint64(nextDim) << 51
+	return k
+}
+
+// occBitmap is a 4096-bit bitmap stored as [64]uint64 (512 B).
+// The domain value v (0..4095) maps to word v/64, bit v%64.
+type occBitmap [64]uint64
+
+func (b *occBitmap) set(v uint16) {
+	b[v>>6] |= 1 << (v & 63)
+}
+
+func (b *occBitmap) merge(other *occBitmap) {
+	for i := range b {
+		b[i] |= other[i]
+	}
+}
+
+// hasInBounds returns true if any set bit falls in [minVal, maxVal].
+func (b *occBitmap) hasInBounds(minVal, maxVal int64) bool {
+	lo, hi := int(minVal), int(maxVal)
+	for v := lo; v <= hi; v++ {
+		if b[v>>6]&(1<<(v&63)) != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// emptyCoversFromBitmap returns canonical cover prefixes for gaps in [minVal,maxVal].
+func emptyCoversFromBitmap(minVal, maxVal int64, b *occBitmap) []string {
+	maxDomain := int64(1<<BitLength) - 1
+	gapStart := minVal
+	var covers []string
+	for v := minVal; v <= maxVal; v++ {
+		if b[v>>6]&(1<<(v&63)) == 0 {
+			continue
+		}
+		// v is occupied
+		if gapStart <= v-1 {
+			covers = append(covers, getCanonicalCover(gapStart, v-1, 0, maxDomain, "")...)
+		}
+		gapStart = v + 1
+	}
+	if gapStart <= maxVal {
+		covers = append(covers, getCanonicalCover(gapStart, maxVal, 0, maxDomain, "")...)
+	}
+	return covers
+}
 
 type EmptyIndexND struct {
-	Levels []map[string][]uint16
+	Levels []map[uint64]*occBitmap
 }
 
-// sortedUint16Insert inserts v into the sorted slice if not already present.
-func sortedUint16Insert(s []uint16, v uint16) []uint16 {
-	i := sort.Search(len(s), func(i int) bool { return s[i] >= v })
-	if i < len(s) && s[i] == v {
-		return s // already present
+func addOccupiedValue(index map[uint64]*occBitmap, key uint64, value int64) {
+	bm := index[key]
+	if bm == nil {
+		bm = new(occBitmap)
+		index[key] = bm
 	}
-	s = append(s, 0)
-	copy(s[i+1:], s[i:])
-	s[i] = v
-	return s
+	bm.set(uint16(value))
 }
 
-func addOccupiedValue(index map[string][]uint16, key string, value int64) {
-	index[key] = sortedUint16Insert(index[key], uint16(value))
-}
-
-func mergeOccupiedIndex(dst, src map[string][]uint16) {
-	for key, values := range src {
-		for _, v := range values {
-			dst[key] = sortedUint16Insert(dst[key], v)
+func mergeOccupiedIndex(dst, src map[uint64]*occBitmap) {
+	for key, bm := range src {
+		if dst[key] == nil {
+			// share the bitmap directly (safe: src shard is discarded after merge)
+			dst[key] = bm
+		} else {
+			dst[key].merge(bm)
 		}
 	}
 }
 
-func (index *EmptyIndexND) occupiedValues(parentPrefixes []string, nextDim int) []uint16 {
+func (index *EmptyIndexND) occupiedBitmap(prefixCodes []uint32, nextDim int) *occBitmap {
 	if nextDim <= 0 || nextDim > len(index.Levels) {
 		return nil
 	}
-	return index.Levels[nextDim-1][parentCacheKey(nextDim, parentPrefixes)]
+	return index.Levels[nextDim-1][packIndexKey(nextDim, prefixCodes)]
+}
+
+// occupiedValues returns a []uint16 view for callers that still need the slice
+// interface (buildQueryTouchedGlobalEmptyRegionsND uses hasOccupiedValueInBounds
+// and emptyCoversForBounds — we replace those call sites below).
+func (index *EmptyIndexND) occupiedValues(parentPrefixes []string, nextDim int) *occBitmap {
+	if nextDim <= 0 || nextDim > len(index.Levels) {
+		return nil
+	}
+	codes := make([]uint32, len(parentPrefixes))
+	for i, p := range parentPrefixes {
+		codes[i] = prefixToCode(p)
+	}
+	return index.Levels[nextDim-1][packIndexKey(nextDim, codes)]
 }
 
 func totalIndexedParentNodes(index EmptyIndexND) int {
@@ -347,36 +467,64 @@ func totalIndexedParentNodes(index EmptyIndexND) int {
 	return total
 }
 
+// prefixesForValueIntersectingQueryCodes is the same as prefixesForValueIntersectingQuery
+// but returns (prefix string, prefixCode uint32) pairs to avoid re-encoding in the hot loop.
+func prefixesForValueIntersectingQueryCoded(value, queryMin, queryMax int64) ([]string, []uint32) {
+	valueBin := fmt.Sprintf("%0*b", BitLength, value)
+	strs := make([]string, 0, BitLength+1)
+	codes := make([]uint32, 0, BitLength+1)
+	for prefixLen := 0; prefixLen <= BitLength; prefixLen++ {
+		prefix := valueBin[:prefixLen]
+		minVal, maxVal := prefixNodeBounds(prefix)
+		if maxVal < queryMin || minVal > queryMax {
+			continue
+		}
+		strs = append(strs, prefix)
+		codes = append(codes, prefixToCode(prefix))
+	}
+	return strs, codes
+}
+
 func buildNDPrefixOccupancyIndexSerial(points []Point, query RangeQuery, maxParentDim int) EmptyIndexND {
 	if maxParentDim < 1 || maxParentDim > NumDims {
 		maxParentDim = NumDims
 	}
-	levels := make([]map[string][]uint16, NumDims-1)
+	levels := make([]map[uint64]*occBitmap, NumDims-1)
 	for i := range levels {
-		levels[i] = make(map[string][]uint16)
+		levels[i] = make(map[uint64]*occBitmap)
 	}
+
+	// reusable per-point scratch: prefix codes per dim, up to BitLength+1 entries
+	var prefixCodes [NumDims][]uint32
+
 	for _, point := range points {
-		prefixOptions := make([][]string, NumDims)
 		for d := 0; d < NumDims; d++ {
-			prefixOptions[d] = prefixesForValueIntersectingQuery(point.Coords[d], query.Bounds[d][0], query.Bounds[d][1])
+			_, prefixCodes[d] = prefixesForValueIntersectingQueryCoded(
+				point.Coords[d], query.Bounds[d][0], query.Bounds[d][1])
 		}
 		for nextDim := 1; nextDim < NumDims && nextDim < maxParentDim; nextDim++ {
-			if len(prefixOptions[nextDim-1]) == 0 {
+			if len(prefixCodes[nextDim-1]) == 0 {
 				continue
 			}
-			parentPrefixes := make([]string, nextDim)
+			// parentCodesBuf holds the packed codes for dims 0..nextDim-1
+			var parentCodesBuf [NumDims]uint32
 			var walk func(dim int)
 			walk = func(dim int) {
 				if dim == nextDim {
-					key := parentCacheKey(nextDim, parentPrefixes)
-					addOccupiedValue(levels[nextDim-1], key, point.Coords[nextDim])
+					key := packIndexKey(nextDim, parentCodesBuf[:nextDim])
+					bm := levels[nextDim-1][key]
+					if bm == nil {
+						bm = new(occBitmap)
+						levels[nextDim-1][key] = bm
+					}
+					bm.set(uint16(point.Coords[nextDim]))
 					return
 				}
-				if len(prefixOptions[dim]) == 0 {
+				if len(prefixCodes[dim]) == 0 {
 					return
 				}
-				for _, prefix := range prefixOptions[dim] {
-					parentPrefixes[dim] = prefix
+				for _, code := range prefixCodes[dim] {
+					parentCodesBuf[dim] = code
 					walk(dim + 1)
 				}
 			}
@@ -387,8 +535,7 @@ func buildNDPrefixOccupancyIndexSerial(points []Point, query RangeQuery, maxPare
 }
 
 // buildNDPrefixOccupancyIndex builds the index in parallel and merges shards.
-// D1: after each shard is merged into dst, the shard is nilled so the GC can
-// reclaim it immediately rather than waiting until the whole function returns.
+// D1: each shard is nilled after merge so the GC can reclaim it immediately.
 func buildNDPrefixOccupancyIndex(points []Point, query RangeQuery, maxParentDim int) EmptyIndexND {
 	workers := effectiveWorkers(len(points))
 	if workers <= 1 {
@@ -396,6 +543,7 @@ func buildNDPrefixOccupancyIndex(points []Point, query RangeQuery, maxParentDim 
 	}
 
 	shards := make([]EmptyIndexND, workers)
+	parBuildStart := time.Now()
 	if err := parallelFor(workers, func(worker int) error {
 		start := worker * len(points) / workers
 		end := (worker + 1) * len(points) / workers
@@ -404,59 +552,41 @@ func buildNDPrefixOccupancyIndex(points []Point, query RangeQuery, maxParentDim 
 	}); err != nil {
 		panic(err)
 	}
+	offlineTiming.IndexParallelBuildMs = float64(time.Since(parBuildStart).Nanoseconds()) / 1e6
 
 	if maxParentDim < 1 || maxParentDim > NumDims {
 		maxParentDim = NumDims
 	}
-	levels := make([]map[string][]uint16, NumDims-1)
+	levels := make([]map[uint64]*occBitmap, NumDims-1)
 	for i := range levels {
-		levels[i] = make(map[string][]uint16)
+		levels[i] = make(map[uint64]*occBitmap)
 	}
-	// D1: nil each shard after merging so memory is reclaimed promptly.
+	// SERIAL: shard merge runs single-threaded regardless of core count.
+	mergeStart := time.Now()
 	for i := range shards {
 		for levelIdx := range levels {
 			mergeOccupiedIndex(levels[levelIdx], shards[i].Levels[levelIdx])
 		}
-		shards[i] = EmptyIndexND{} // release shard maps
+		shards[i] = EmptyIndexND{}
 	}
+	offlineTiming.IndexSerialMergeMs = float64(time.Since(mergeStart).Nanoseconds()) / 1e6
 	return EmptyIndexND{Levels: levels}
 }
 
-// emptyCoversForBounds returns canonical cover prefixes for gaps in [minVal,maxVal]
-// not occupied by any value in the compact sorted slice.
-func emptyCoversForBounds(minVal, maxVal int64, occupied []uint16) []string {
-	maxDomain := int64(math.Pow(2, BitLength)) - 1
-	gapStart := minVal
-	var covers []string
-	for _, v := range occupied {
-		value := int64(v)
-		if value < minVal || value > maxVal {
-			continue
-		}
-		if value < gapStart {
-			continue
-		}
-		if gapStart <= value-1 {
-			covers = append(covers, getCanonicalCover(gapStart, value-1, 0, maxDomain, "")...)
-		}
-		if value+1 > gapStart {
-			gapStart = value + 1
-		}
+// emptyCoversForBounds returns canonical cover prefixes for gaps in [minVal,maxVal].
+// occupied may be nil (means no points present → full range is empty).
+func emptyCoversForBounds(minVal, maxVal int64, occupied *occBitmap) []string {
+	if occupied == nil {
+		return getCanonicalCover(minVal, maxVal, 0, int64(1<<BitLength)-1, "")
 	}
-	if gapStart <= maxVal {
-		covers = append(covers, getCanonicalCover(gapStart, maxVal, 0, maxDomain, "")...)
-	}
-	return covers
+	return emptyCoversFromBitmap(minVal, maxVal, occupied)
 }
 
-func hasOccupiedValueInBounds(occupied []uint16, minVal, maxVal int64) bool {
-	for _, v := range occupied {
-		value := int64(v)
-		if value >= minVal && value <= maxVal {
-			return true
-		}
+func hasOccupiedValueInBounds(occupied *occBitmap, minVal, maxVal int64) bool {
+	if occupied == nil {
+		return false
 	}
-	return false
+	return occupied.hasInBounds(minVal, maxVal)
 }
 
 func collectIntersectingPrefixNodes(minQuery, maxQuery int64) []PrefixNode {
@@ -497,6 +627,7 @@ func buildQueryTouchedGlobalEmptyRegionsND(
 
 	localPatterns := make([][]string, len(nodesByDim[0]))
 	var stopFlag int32
+	regionParallelStart := time.Now()
 	err := parallelFor(len(nodesByDim[0]), func(firstIdx int) error {
 		if atomic.LoadInt32(&stopFlag) != 0 {
 			return nil
@@ -509,7 +640,11 @@ func buildQueryTouchedGlobalEmptyRegionsND(
 				return
 			}
 			occupied := index.occupiedValues(parentPrefixes, nextDim)
-			for _, emptyPrefix := range emptyCoversForBounds(query.Bounds[nextDim][0], query.Bounds[nextDim][1], occupied) {
+			covers := emptyCoversForBounds(query.Bounds[nextDim][0], query.Bounds[nextDim][1], occupied)
+			if dryRunCounting && len(covers) > 0 {
+				atomic.AddInt64(&dryRunLevelRawCounts[nextDim], int64(len(covers)))
+			}
+			for _, emptyPrefix := range covers {
 				prefixes := make([]string, NumDims)
 				copy(prefixes, parentPrefixes)
 				prefixes[nextDim] = emptyPrefix
@@ -548,14 +683,22 @@ func buildQueryTouchedGlobalEmptyRegionsND(
 	if err != nil {
 		panic(err)
 	}
+	offlineTiming.RegionParallelMs = float64(time.Since(regionParallelStart).Nanoseconds()) / 1e6
 	if atomic.LoadInt32(&stopFlag) != 0 {
 		panic(fmt.Sprintf("database-wide global empty region generation exceeded -max-global-regions=%d; lower -limit, raise the cap, or set it to 0", maxGlobalRegions))
 	}
+	// SERIAL: gather per-worker results and run the final maximal pass. The
+	// dedupe+sort inside that pass is single-threaded (timed separately); only
+	// the containment filter within it is parallel.
+	serialAggStart := time.Now()
 	patterns := make([]string, 0)
 	for _, local := range localPatterns {
 		patterns = append(patterns, local...)
 	}
-	patterns = selectMaximalPatterns(patterns)
+	unique, starCounts := dedupeAndSortPatterns(patterns)
+	offlineTiming.RegionSerialDedupeSortMs = float64(time.Since(serialAggStart).Nanoseconds()) / 1e6
+	patterns = maximalFilterSorted(unique, starCounts)
+	offlineTiming.RegionSerialAggregateMs = float64(time.Since(serialAggStart).Nanoseconds()) / 1e6
 	if maxGlobalRegions > 0 && len(patterns) > maxGlobalRegions {
 		panic(fmt.Sprintf("database-wide global empty region generation exceeded -max-global-regions=%d; lower -limit, raise the cap, or set it to 0", maxGlobalRegions))
 	}
@@ -677,6 +820,9 @@ func deriveGlobalEmptyParentKeysOffline(
 	regions []GlobalEmptyRegion,
 ) (map[string]DerivedPatternKey, int, error) {
 	ordered := make([]DerivedPatternKey, len(regions))
+	// PARALLEL: WKD-IBE KeyGen for every region — the dominant offline cost,
+	// but fully core-scalable.
+	keyGenStart := time.Now()
 	if err := parallelFor(len(regions), func(idx int) error {
 		key, err := derivePatternKeyFromRoot(params, msk, regions[idx].Pattern, nil)
 		if err != nil {
@@ -687,12 +833,25 @@ func deriveGlobalEmptyParentKeysOffline(
 	}); err != nil {
 		return nil, 0, err
 	}
+	offlineTiming.ParentParallelKeyGenMs = float64(time.Since(keyGenStart).Nanoseconds()) / 1e6
+
+	// SERIAL: assemble the pattern→key map and count marshalled bytes. The
+	// Marshal(true) calls are pure instrumentation (byte accounting only) and
+	// are timed as their own sub-total.
+	assembleStart := time.Now()
 	keys := make(map[string]DerivedPatternKey, len(regions))
-	totalBytes := 0
 	for idx, region := range regions {
 		keys[region.Pattern] = ordered[idx]
+	}
+	var marshalMs float64
+	totalBytes := 0
+	marshalStart := time.Now()
+	for idx := range regions {
 		totalBytes += len(ordered[idx].Key.Marshal(true))
 	}
+	marshalMs = float64(time.Since(marshalStart).Nanoseconds()) / 1e6
+	offlineTiming.ParentSerialAssembleMs = float64(time.Since(assembleStart).Nanoseconds()) / 1e6
+	offlineTiming.ParentSerialMarshalMs = marshalMs
 	return keys, totalBytes, nil
 }
 
@@ -827,8 +986,10 @@ func dedupePatterns(patterns []string) []string {
 	return unique
 }
 
-func selectMaximalPatterns(patterns []string) []string {
-	unique := dedupePatterns(patterns)
+// dedupeAndSortPatterns is the SERIAL core of selectMaximalPatterns: dedupe,
+// sort by descending star count, and precompute star counts. Single-threaded.
+func dedupeAndSortPatterns(patterns []string) (unique []string, starCounts []int) {
+	unique = dedupePatterns(patterns)
 	sort.Slice(unique, func(i, j int) bool {
 		starsI := strings.Count(unique[i], "*")
 		starsJ := strings.Count(unique[j], "*")
@@ -837,10 +998,17 @@ func selectMaximalPatterns(patterns []string) []string {
 		}
 		return unique[i] < unique[j]
 	})
-	starCounts := make([]int, len(unique))
+	starCounts = make([]int, len(unique))
 	for i, pattern := range unique {
 		starCounts[i] = strings.Count(pattern, "*")
 	}
+	return unique, starCounts
+}
+
+// maximalFilterSorted is the PARALLEL core of selectMaximalPatterns: given
+// already-deduped/sorted patterns, drop any pattern contained in a
+// higher-star one. The per-candidate containment scan runs across workers.
+func maximalFilterSorted(unique []string, starCounts []int) []string {
 	keep := make([]bool, len(unique))
 	if err := parallelFor(len(unique), func(i int) error {
 		candidate := unique[i]
@@ -862,6 +1030,11 @@ func selectMaximalPatterns(patterns []string) []string {
 		}
 	}
 	return maximal
+}
+
+func selectMaximalPatterns(patterns []string) []string {
+	unique, starCounts := dedupeAndSortPatterns(patterns)
+	return maximalFilterSorted(unique, starCounts)
 }
 
 func patternToBounds(pattern string) ([NumDims][2]int64, error) {
@@ -1447,6 +1620,7 @@ func main() {
 	maxGlobalRegions := flag.Int("max-global-regions", 200000, "abort if database-wide global empty region generation exceeds this cap; 0 disables the cap")
 	maxParentDim := flag.Int("max-parent-dim", NumDims, "maximum dimension depth for parent recursion")
 	workers := flag.Int("mhibe-workers", runtime.NumCPU(), "number of parallel workers")
+	dryRunCount := flag.Bool("dry-run-count", false, "count-only mode: enumerate global empty regions with the abort cap disabled, report the true raw per-level and maximal region counts, then exit before any key generation")
 	flag.Parse()
 
 	mhibeWorkers = *workers
@@ -1454,6 +1628,15 @@ func main() {
 		mhibeWorkers = 1
 	}
 	runtime.GOMAXPROCS(mhibeWorkers)
+
+	// -dry-run-count: observe the true region counts instead of aborting on the
+	// cap. Enable per-level raw tallying and disable the abort cap so the full
+	// recursion runs to completion regardless of how many patterns it emits.
+	if *dryRunCount {
+		dryRunCounting = true
+		*maxGlobalRegions = 0
+		*skipZK = true // no ZK work in count-only mode
+	}
 
 	if *poneglyphQ6 {
 		*dateMin = "1994-01-01"
@@ -1471,8 +1654,18 @@ func main() {
 	mcl.InitFromString("bls12-381")
 	setupStart := time.Now()
 	params, masterKey := wkdibe.Setup(NumDims*BitLength, true)
+	// The accumulator SRS (~60 MB across pkvk-17/*.data) is ONLY consumed by
+	// Engine B. Under -skip-zk the whole ZK engine is skipped, so loading it
+	// wastes both load time and ~60 MB of resident memory. Guard the load so it
+	// only happens when ZK will actually run. The tables are generated on the
+	// first run that finds pkvk-17 missing and reused (Read, not regenerated)
+	// thereafter — so this is never regenerated per run.
 	var acc bpacc.BpAcc
-	acc.KeyGenLoad(8, 17, "my_secure_seed", "./pkvk-17")
+	if !*skipZK {
+		acc.KeyGenLoad(8, 17, "my_secure_seed", "./pkvk-17")
+	} else {
+		fmt.Println("[*] -skip-zk set: skipping accumulator SRS load (saves ~60 MB + load time)")
+	}
 	setupMs := float64(time.Since(setupStart).Nanoseconds()) / 1e6
 	fmt.Printf("[*] Global Setup Time: %.2f ms\n\n", setupMs)
 
@@ -1565,6 +1758,28 @@ func main() {
 	globalEmptyRegions := buildQueryTouchedGlobalEmptyRegionsND(offlineDomain, &databaseEmptyIndex, *maxGlobalRegions, *maxParentDim)
 	globalRegionMs := float64(time.Since(globalRegionStart).Nanoseconds()) / 1e6
 
+	if *dryRunCount {
+		fmt.Println("\n=== DRY-RUN COUNT (no cap, no key generation) ===")
+		fmt.Printf("[*] max-parent-dim: %d\n", *maxParentDim)
+		fmt.Printf("[+] Database Empty Index Build Time: %.2f ms\n", emptyIndexMs)
+		fmt.Printf("[+] Empty Region Enumeration Time: %.2f ms\n", globalRegionMs)
+		fmt.Printf("[+] Indexed Database-Wide Parent Nodes: %d\n", totalIndexedParentNodes(databaseEmptyIndex))
+		var rawTotal int64
+		for level := 1; level < NumDims; level++ {
+			raw := atomic.LoadInt64(&dryRunLevelRawCounts[level])
+			if level >= *maxParentDim && raw == 0 {
+				continue
+			}
+			fmt.Printf("    level %d (pattern fixes dims 0..%d, empties dim %d): %d raw covers (pre-maximal)\n",
+				level, level-1, level, raw)
+			rawTotal += raw
+		}
+		fmt.Printf("[+] Total RAW empty covers across all levels (pre-maximal): %d\n", rawTotal)
+		fmt.Printf("[+] FINAL maximal (deduped) global empty regions: %d\n", len(globalEmptyRegions))
+		fmt.Println("[*] -dry-run-count set: exiting before parent-key generation.")
+		return
+	}
+
 	// D1: print the indexed node count, then immediately release the index.
 	indexedNodes := totalIndexedParentNodes(databaseEmptyIndex)
 	databaseEmptyIndex = EmptyIndexND{} // release compact maps
@@ -1591,6 +1806,32 @@ func main() {
 	fmt.Printf("[+] Indexed Database-Wide Parent Nodes: %d\n", indexedNodes)
 	fmt.Printf("[+] Database-Wide Global Empty Parent Regions: %d\n", len(globalEmptyRegions))
 	fmt.Printf("[+] Database-Wide Parent Key Material: %.2f KB\n", float64(globalParentKeyBytes)/1024.0)
+
+	// -------------------------------------------------------------------
+	// Parallel-vs-serial breakdown of the offline phase.
+	// "Serial residual" = time that stays even with infinite cores
+	// (Amdahl-law lower bound); "parallel" scales with core count.
+	// -------------------------------------------------------------------
+	t := offlineTiming
+	serialResidual := t.IndexSerialMergeMs + t.RegionSerialAggregateMs + t.ParentSerialAssembleMs
+	parallelWork := t.IndexParallelBuildMs + t.RegionParallelMs + t.ParentParallelKeyGenMs
+	fmt.Println("\n--- OFFLINE PARALLEL vs SERIAL BREAKDOWN ---")
+	fmt.Println("  Phase 1 Index Build:")
+	fmt.Printf("    [parallel] per-worker shard construction : %.2f ms\n", t.IndexParallelBuildMs)
+	fmt.Printf("    [SERIAL]   shard merge                    : %.2f ms\n", t.IndexSerialMergeMs)
+	fmt.Println("  Phase 2 Empty Region Enumeration:")
+	fmt.Printf("    [parallel] dim-0 fan-out recursion        : %.2f ms\n", t.RegionParallelMs)
+	fmt.Printf("    [SERIAL]   gather + final maximal pass     : %.2f ms\n", t.RegionSerialAggregateMs)
+	fmt.Printf("      (of which serial dedupe+sort            : %.2f ms)\n", t.RegionSerialDedupeSortMs)
+	fmt.Println("  Phase 3 Parent Key Generation:")
+	fmt.Printf("    [parallel] WKD-IBE KeyGen                  : %.2f ms\n", t.ParentParallelKeyGenMs)
+	fmt.Printf("    [SERIAL]   map assemble + Marshal counting : %.2f ms\n", t.ParentSerialAssembleMs)
+	fmt.Printf("      (of which Marshal byte-counting only     : %.2f ms)\n", t.ParentSerialMarshalMs)
+	fmt.Printf("  => Total PARALLEL work (scales with cores)  : %.2f ms\n", parallelWork)
+	fmt.Printf("  => Total SERIAL residual (core-independent) : %.2f ms\n", serialResidual)
+	if offlineInitMs > 0 {
+		fmt.Printf("  => Serial residual fraction of offline      : %.2f%%\n", 100.0*serialResidual/offlineInitMs)
+	}
 
 	// Upload stage (optional)
 	if *uploadKeys {

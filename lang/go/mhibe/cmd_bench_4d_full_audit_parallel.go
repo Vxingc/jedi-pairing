@@ -28,10 +28,50 @@ import (
 	"github.com/ucbrise/jedi-pairing/lang/go/wkdibe"
 )
 
-const (
-	NumDims   = 4
-	BitLength = 12
-)
+const NumDims = 4
+
+// DimBitLengths holds the bit width for each dimension.
+// Defaults: shipdate=12, discount×100=4, quantity=6, tax×100=4.
+// Override at startup with -dim-bits (comma-separated, e.g. "12,4,6,4").
+var DimBitLengths = [NumDims]int{12, 4, 6, 4}
+
+// DimBitOffset[d] = sum of DimBitLengths[0..d-1]; the absolute bit-slot
+// where dimension d starts inside a concatenated pattern string.
+var DimBitOffset [NumDims]int
+
+// TotalBitLength = sum of all DimBitLengths; total length of a pattern string.
+var TotalBitLength int
+
+// DimExpandAsParent[d] = true means dimension d is allowed to be fixed as a
+// parent prefix so the recursion can descend into dimension d+1.
+// Set false for a dimension whose occupancy fan-out would cause region count
+// to explode (e.g. a dense mid-range dimension like quantity).
+// Configured by -expand-parent-dims flag (comma-separated dim indices).
+// Default: all dimensions are expandable (same behaviour as before).
+var DimExpandAsParent = [NumDims]bool{true, true, true, true}
+
+// initDimBits recomputes DimBitOffset and TotalBitLength from DimBitLengths.
+// Must be called once after DimBitLengths is set (after flag parsing).
+func initDimBits() {
+	off := 0
+	for d := 0; d < NumDims; d++ {
+		DimBitOffset[d] = off
+		off += DimBitLengths[d]
+	}
+	TotalBitLength = off
+}
+
+// slotToDimBit converts an absolute bit slot index within a pattern string to
+// the (dim, bitPosition) pair where bitPosition is the 0-based index within
+// that dimension's field. Used by attributeValueForBit.
+func slotToDimBit(slot int) (dim, bitPos int) {
+	for d := NumDims - 1; d >= 0; d-- {
+		if slot >= DimBitOffset[d] {
+			return d, slot - DimBitOffset[d]
+		}
+	}
+	return 0, slot
+}
 
 var mhibeWorkers = runtime.NumCPU()
 
@@ -61,8 +101,8 @@ type OfflineEmptyMaterial struct {
 
 func fullDomainQuery() RangeQuery {
 	var query RangeQuery
-	maxDomain := int64(1<<BitLength) - 1
 	for dim := 0; dim < NumDims; dim++ {
+		maxDomain := int64(1<<DimBitLengths[dim]) - 1
 		query.Bounds[dim] = [2]int64{0, maxDomain}
 	}
 	return query
@@ -209,21 +249,23 @@ func splitRect2D(
 	return append(bottom, top...)
 }
 
+// MapToIDs returns canonical cover prefixes for the query range in each dim.
 func MapToIDs(query RangeQuery) []string {
-	maxDomain := int64(math.Pow(2, BitLength)) - 1
 	var dimCovers [][]string
 	for i := 0; i < NumDims; i++ {
+		maxDomain := int64(1<<DimBitLengths[i]) - 1
 		dimCovers = append(dimCovers, getCanonicalCover(query.Bounds[i][0], query.Bounds[i][1], 0, maxDomain, ""))
 	}
 	return cartesianProduct(dimCovers)
 }
 
-func FormatToWildcardPattern(prefix string, numDims int, bitLen int) string {
+// FormatToWildcardPattern pads each dimension's prefix to its own bit width.
+func FormatToWildcardPattern(prefix string) string {
 	dims := strings.Split(prefix, "||")
 	var b strings.Builder
-	for d := 0; d < numDims; d++ {
+	for d := 0; d < NumDims; d++ {
 		b.WriteString(dims[d])
-		for i := len(dims[d]); i < bitLen; i++ {
+		for i := len(dims[d]); i < DimBitLengths[d]; i++ {
 			b.WriteByte('*')
 		}
 	}
@@ -233,7 +275,7 @@ func FormatToWildcardPattern(prefix string, numDims int, bitLen int) string {
 func FormatPointToBinary(p Point) string {
 	var b strings.Builder
 	for i := 0; i < NumDims; i++ {
-		b.WriteString(fmt.Sprintf("%0*b", BitLength, p.Coords[i]))
+		b.WriteString(fmt.Sprintf("%0*b", DimBitLengths[i], p.Coords[i]))
 	}
 	return b.String()
 }
@@ -257,10 +299,10 @@ func IsPointInQuery(p Point, q RangeQuery) bool {
 }
 
 // 支持二维/多维主顺序切分器
-func generateBitOrderCustom(dimOrder []int, bitLen int) []int {
+func generateBitOrderCustom(dimOrder []int) []int {
 	var order []int
 	for _, d := range dimOrder {
-		for i := d * bitLen; i < (d+1)*bitLen; i++ {
+		for i := DimBitOffset[d]; i < DimBitOffset[d]+DimBitLengths[d]; i++ {
 			order = append(order, i)
 		}
 	}
@@ -395,13 +437,29 @@ func mergeOccupiedIndex(dst, src map[string]map[int64]struct{}) {
 
 type EmptyIndexND struct {
 	Levels []map[string]map[int64]struct{}
+	// LeafExact stores exact-value tuples for the final non-expandable dimension.
+	// Key format: "parentPrefixes||exactValueBinary" where exactValueBinary is
+	// the full BitLength binary representation of the leaf dimension value.
+	// This avoids prefix-tree explosion when a dimension is marked non-expandable.
+	LeafExact map[string]map[int64]struct{}
 }
 
 func parentCacheKey(nextDim int, parentPrefixes []string) string {
 	return fmt.Sprintf("%d::%s", nextDim, strings.Join(parentPrefixes, "||"))
 }
 
-func prefixNodeBounds(prefix string) (int64, int64) {
+// leafExactKey encodes a (parentPrefixes, exactLeafValue) pair for LeafExact.
+// parentPrefixes are the prefix-expanded parent dims; leafDim and leafValue
+// are the exact (non-expanded) penultimate dimension; nextDim is the dim whose
+// occupancy is being stored (the last dim that needs cover).
+func leafExactKey(parentPrefixes []string, leafDim int, leafValue int64) string {
+	leafBin := fmt.Sprintf("%0*b", DimBitLengths[leafDim], leafValue)
+	return fmt.Sprintf("%d::%s||%s", leafDim+1, strings.Join(parentPrefixes, "||"), leafBin)
+}
+
+// prefixNodeBounds returns the [min, max] integer range represented by a
+// bit-prefix of length len(prefix) within a domain of bitLen bits.
+func prefixNodeBounds(prefix string, bitLen int) (int64, int64) {
 	var minVal int64
 	for i := 0; i < len(prefix); i++ {
 		minVal <<= 1
@@ -409,7 +467,7 @@ func prefixNodeBounds(prefix string) (int64, int64) {
 			minVal |= 1
 		}
 	}
-	remaining := BitLength - len(prefix)
+	remaining := bitLen - len(prefix)
 	maxVal := minVal
 	if remaining > 0 {
 		minVal <<= remaining
@@ -418,12 +476,14 @@ func prefixNodeBounds(prefix string) (int64, int64) {
 	return minVal, maxVal
 }
 
-func prefixesForValueIntersectingQuery(value, queryMin, queryMax int64) []string {
-	valueBin := fmt.Sprintf("%0*b", BitLength, value)
-	prefixes := make([]string, 0, BitLength+1)
-	for prefixLen := 0; prefixLen <= BitLength; prefixLen++ {
+// prefixesForValueIntersectingQuery returns all binary prefixes (of any length
+// from 0 to bitLen) for the given value that intersect [queryMin, queryMax].
+func prefixesForValueIntersectingQuery(value, queryMin, queryMax int64, bitLen int) []string {
+	valueBin := fmt.Sprintf("%0*b", bitLen, value)
+	prefixes := make([]string, 0, bitLen+1)
+	for prefixLen := 0; prefixLen <= bitLen; prefixLen++ {
 		prefix := valueBin[:prefixLen]
-		minVal, maxVal := prefixNodeBounds(prefix)
+		minVal, maxVal := prefixNodeBounds(prefix, bitLen)
 		if maxVal < queryMin || minVal > queryMax {
 			continue
 		}
@@ -455,12 +515,14 @@ func buildNDPrefixOccupancyIndex(points []Point, query RangeQuery, maxParentDim 
 	for i := range levels {
 		levels[i] = make(map[string]map[int64]struct{})
 	}
+	leafExact := make(map[string]map[int64]struct{})
 	for _, shard := range shards {
 		for levelIdx := range levels {
 			mergeOccupiedIndex(levels[levelIdx], shard.Levels[levelIdx])
 		}
+		mergeOccupiedIndex(leafExact, shard.LeafExact)
 	}
-	return EmptyIndexND{Levels: levels}
+	return EmptyIndexND{Levels: levels, LeafExact: leafExact}
 }
 
 func buildNDPrefixOccupancyIndexSerial(points []Point, query RangeQuery, maxParentDim int) EmptyIndexND {
@@ -471,13 +533,21 @@ func buildNDPrefixOccupancyIndexSerial(points []Point, query RangeQuery, maxPare
 	for i := range levels {
 		levels[i] = make(map[string]map[int64]struct{})
 	}
+	leafExact := make(map[string]map[int64]struct{})
+
 	for _, point := range points {
 		prefixOptions := make([][]string, NumDims)
 		for d := 0; d < NumDims; d++ {
-			prefixOptions[d] = prefixesForValueIntersectingQuery(point.Coords[d], query.Bounds[d][0], query.Bounds[d][1])
+			prefixOptions[d] = prefixesForValueIntersectingQuery(
+				point.Coords[d], query.Bounds[d][0], query.Bounds[d][1], DimBitLengths[d])
 		}
 
 		for nextDim := 1; nextDim < NumDims && nextDim < maxParentDim; nextDim++ {
+			// Only build the index entry for level nextDim when the preceding
+			// dimension (nextDim-1) is allowed to act as a parent prefix.
+			if !DimExpandAsParent[nextDim-1] {
+				continue
+			}
 			if len(prefixOptions[nextDim-1]) == 0 {
 				continue
 			}
@@ -499,9 +569,61 @@ func buildNDPrefixOccupancyIndexSerial(points []Point, query RangeQuery, maxPare
 			}
 			walk(0)
 		}
+
+		// Build LeafExact index: for the first non-expandable dim d after a chain
+		// of expandable dims, store (p0..p_{d-1}, v_d_exact) → v_{d+1} occupancy.
+		// This enables exact-value enumeration in buildQueryTouchedGlobalEmptyRegionsND
+		// instead of prefix-tree expansion, avoiding combinatorial explosion.
+		//
+		// Find the leaf penultimate dim: first non-expandable dim that has a
+		// subsequent dim to cover.
+		for leafPenultimateDim := 1; leafPenultimateDim < NumDims-1; leafPenultimateDim++ {
+			if DimExpandAsParent[leafPenultimateDim] {
+				continue // skip expandable dims
+			}
+			// leafPenultimateDim is non-expandable; check all preceding dims are expandable
+			allPrecExpandable := true
+			for d := 0; d < leafPenultimateDim; d++ {
+				if !DimExpandAsParent[d] {
+					allPrecExpandable = false
+					break
+				}
+			}
+			if !allPrecExpandable {
+				break // non-contiguous expand pattern; only handle first transition
+			}
+			// Point must fall in the query for leafPenultimateDim
+			if point.Coords[leafPenultimateDim] < query.Bounds[leafPenultimateDim][0] ||
+				point.Coords[leafPenultimateDim] > query.Bounds[leafPenultimateDim][1] {
+				break
+			}
+			leafFinalDim := leafPenultimateDim + 1
+			if leafFinalDim >= NumDims {
+				break
+			}
+			// Walk all prefix combos of the expandable parent dims
+			parentPrefixes := make([]string, leafPenultimateDim)
+			var walkLeaf func(dim int)
+			walkLeaf = func(dim int) {
+				if dim == leafPenultimateDim {
+					key := leafExactKey(parentPrefixes, leafPenultimateDim, point.Coords[leafPenultimateDim])
+					addOccupiedValue(leafExact, key, point.Coords[leafFinalDim])
+					return
+				}
+				if len(prefixOptions[dim]) == 0 {
+					return
+				}
+				for _, prefix := range prefixOptions[dim] {
+					parentPrefixes[dim] = prefix
+					walkLeaf(dim + 1)
+				}
+			}
+			walkLeaf(0)
+			break // only process the first leaf transition
+		}
 	}
 
-	return EmptyIndexND{Levels: levels}
+	return EmptyIndexND{Levels: levels, LeafExact: leafExact}
 }
 
 func (index *EmptyIndexND) occupiedValues(parentPrefixes []string, nextDim int) map[int64]struct{} {
@@ -516,10 +638,13 @@ func totalIndexedParentNodes(index EmptyIndexND) int {
 	for _, level := range index.Levels {
 		total += len(level)
 	}
+	total += len(index.LeafExact)
 	return total
 }
 
-func emptyCoversForBounds(minVal, maxVal int64, occupied map[int64]struct{}) []string {
+// emptyCoversForBounds returns canonical cover prefixes for gaps in [minVal,maxVal]
+// within a dimension whose domain has bitLen bits.
+func emptyCoversForBounds(minVal, maxVal int64, occupied map[int64]struct{}, bitLen int) []string {
 	values := make([]int64, 0, len(occupied))
 	for value := range occupied {
 		if value >= minVal && value <= maxVal {
@@ -528,7 +653,7 @@ func emptyCoversForBounds(minVal, maxVal int64, occupied map[int64]struct{}) []s
 	}
 	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
 
-	maxDomain := int64(math.Pow(2, BitLength)) - 1
+	maxDomain := int64(1<<bitLen) - 1
 	gapStart := minVal
 	var covers []string
 	for _, value := range values {
@@ -548,8 +673,10 @@ func emptyCoversForBounds(minVal, maxVal int64, occupied map[int64]struct{}) []s
 	return covers
 }
 
-func collectIntersectingPrefixNodes(minQuery, maxQuery int64) []PrefixNode {
-	maxDomain := int64(math.Pow(2, BitLength)) - 1
+// collectIntersectingPrefixNodes returns all prefix-tree nodes intersecting
+// [minQuery, maxQuery] in a dimension with the given bitLen.
+func collectIntersectingPrefixNodes(minQuery, maxQuery int64, bitLen int) []PrefixNode {
+	maxDomain := int64(1<<bitLen) - 1
 	var nodes []PrefixNode
 
 	var walk func(prefix string, minVal, maxVal int64)
@@ -558,7 +685,7 @@ func collectIntersectingPrefixNodes(minQuery, maxQuery int64) []PrefixNode {
 			return
 		}
 		nodes = append(nodes, PrefixNode{Prefix: prefix, Min: minVal, Max: maxVal})
-		if len(prefix) == BitLength {
+		if len(prefix) == bitLen {
 			return
 		}
 		mid := minVal + (maxVal-minVal)/2
@@ -581,7 +708,7 @@ func hasOccupiedValueInBounds(occupied map[int64]struct{}, minVal, maxVal int64)
 
 func buildPatternFromPrefixes(prefixes []string) string {
 	joined := strings.Join(prefixes, "||")
-	return FormatToWildcardPattern(joined, NumDims, BitLength)
+	return FormatToWildcardPattern(joined)
 }
 
 func buildQueryTouchedGlobalEmptyRegionsND(
@@ -592,7 +719,7 @@ func buildQueryTouchedGlobalEmptyRegionsND(
 ) []GlobalEmptyRegion {
 	nodesByDim := make([][]PrefixNode, NumDims)
 	for d := 0; d < NumDims; d++ {
-		nodesByDim[d] = collectIntersectingPrefixNodes(query.Bounds[d][0], query.Bounds[d][1])
+		nodesByDim[d] = collectIntersectingPrefixNodes(query.Bounds[d][0], query.Bounds[d][1], DimBitLengths[d])
 	}
 
 	localPatterns := make([][]string, len(nodesByDim[0]))
@@ -611,7 +738,7 @@ func buildQueryTouchedGlobalEmptyRegionsND(
 			}
 
 			occupied := index.occupiedValues(parentPrefixes, nextDim)
-			for _, emptyPrefix := range emptyCoversForBounds(query.Bounds[nextDim][0], query.Bounds[nextDim][1], occupied) {
+			for _, emptyPrefix := range emptyCoversForBounds(query.Bounds[nextDim][0], query.Bounds[nextDim][1], occupied, DimBitLengths[nextDim]) {
 				prefixes := make([]string, NumDims)
 				copy(prefixes, parentPrefixes)
 				prefixes[nextDim] = emptyPrefix
@@ -630,6 +757,54 @@ func buildQueryTouchedGlobalEmptyRegionsND(
 			}
 
 			if nextDim+1 >= NumDims || nextDim+1 >= maxParentDim {
+				return
+			}
+			// If this dimension is non-expandable, use LeafExact instead of
+			// the prefix-tree to enumerate the final dimension. This avoids
+			// the (bitLen+1)^k combinatorial explosion from prefix ancestors.
+			if !DimExpandAsParent[nextDim] {
+				finalDim := nextDim + 1
+				if finalDim >= NumDims {
+					return
+				}
+				// Collect distinct exact values of nextDim that (a) fall in the
+				// query and (b) have at least one finalDim value in the LeafExact
+				// index under this parentPrefixes context.
+				//
+				// We iterate over the LeafExact map to find all keys that match
+				// our parentPrefixes prefix. The key format is:
+				//   "<nextDim+1>::<p0>||<p1>||...<p_{nextDim-1}>||<v_nextDim_binary>"
+				keyPrefix := fmt.Sprintf("%d::%s||", nextDim+1, strings.Join(parentPrefixes, "||"))
+				for leafKey, leafOccupied := range index.LeafExact {
+					if !strings.HasPrefix(leafKey, keyPrefix) {
+						continue
+					}
+					if localStop || atomic.LoadInt32(&stopFlag) != 0 {
+						return
+					}
+					// Extract the exact-value binary string for nextDim.
+					exactBin := leafKey[len(keyPrefix):]
+					// Build the full-length prefix for nextDim (it IS the exact value).
+					// Generate empty covers for finalDim.
+					for _, emptyPrefix := range emptyCoversForBounds(query.Bounds[finalDim][0], query.Bounds[finalDim][1], leafOccupied, DimBitLengths[finalDim]) {
+						prefixes := make([]string, NumDims)
+						copy(prefixes, parentPrefixes)
+						prefixes[nextDim] = exactBin
+						prefixes[finalDim] = emptyPrefix
+						patterns = append(patterns, buildPatternFromPrefixes(prefixes))
+						if len(patterns)%4096 == 0 {
+							patterns = selectMaximalPatterns(patterns)
+						}
+						if maxGlobalRegions > 0 && len(patterns) > maxGlobalRegions {
+							patterns = selectMaximalPatterns(patterns)
+							if len(patterns) > maxGlobalRegions {
+								localStop = true
+								atomic.StoreInt32(&stopFlag, 1)
+								return
+							}
+						}
+					}
+				}
 				return
 			}
 			for _, node := range nodesByDim[nextDim] {
@@ -671,8 +846,10 @@ func buildQueryTouchedGlobalEmptyRegionsND(
 	return regions
 }
 
-func prefixesFromBounds(minVal, maxVal int64) []string {
-	maxDomain := int64(math.Pow(2, BitLength)) - 1
+// prefixesFromBounds returns canonical cover prefixes for [minVal, maxVal]
+// within a dimension of bitLen bits.
+func prefixesFromBounds(minVal, maxVal int64, bitLen int) []string {
+	maxDomain := int64(1<<bitLen) - 1
 	return getCanonicalCover(minVal, maxVal, 0, maxDomain, "")
 }
 
@@ -695,12 +872,12 @@ func intersectPatternWithQuery(pattern string, query RangeQuery) ([]string, bool
 		if minVal > maxVal {
 			return nil, false, nil
 		}
-		dimCovers = append(dimCovers, prefixesFromBounds(minVal, maxVal))
+		dimCovers = append(dimCovers, prefixesFromBounds(minVal, maxVal, DimBitLengths[d]))
 	}
 
 	patterns := make([]string, 0)
 	for _, prefix := range cartesianProduct(dimCovers) {
-		childPattern := FormatToWildcardPattern(prefix, NumDims, BitLength)
+		childPattern := FormatToWildcardPattern(prefix)
 		if !patternContainsPattern(pattern, childPattern) {
 			return nil, false, fmt.Errorf("intersection child %s escapes global empty pattern %s", childPattern, pattern)
 		}
@@ -901,18 +1078,19 @@ func attributeValueForBit(slot int, bit byte) (*big.Int, error) {
 	if bit != '0' && bit != '1' {
 		return nil, fmt.Errorf("invalid bit %q for attribute slot %d", bit, slot)
 	}
+	dim, bitPos := slotToDimBit(slot)
 	payload := []byte{
 		'm', 'h', 'i', 'b', 'e',
-		byte(slot / BitLength),
-		byte(slot % BitLength),
+		byte(dim),
+		byte(bitPos),
 		bit,
 	}
 	return cryptutils.HashToZp(new(big.Int), payload), nil
 }
 
 func patternToAttributeList(pattern string) (wkdibe.AttributeList, error) {
-	if len(pattern) != NumDims*BitLength {
-		return nil, fmt.Errorf("invalid pattern length %d", len(pattern))
+	if len(pattern) != TotalBitLength {
+		return nil, fmt.Errorf("invalid pattern length %d (expected %d)", len(pattern), TotalBitLength)
 	}
 
 	attrs := make(wkdibe.AttributeList)
@@ -1388,19 +1566,21 @@ func deriveEmptyPatternKeys(
 	return derived, nil
 }
 
+// patternToBounds decodes a concatenated pattern string back to per-dim
+// [min,max] integer ranges, using per-dim bit widths from DimBitLengths.
 func patternToBounds(pattern string) ([NumDims][2]int64, error) {
 	var bounds [NumDims][2]int64
 
-	if len(pattern) != NumDims*BitLength {
-		return bounds, fmt.Errorf("invalid pattern length %d", len(pattern))
+	if len(pattern) != TotalBitLength {
+		return bounds, fmt.Errorf("invalid pattern length %d (expected %d)", len(pattern), TotalBitLength)
 	}
 
 	for d := 0; d < NumDims; d++ {
 		var minVal int64
 		var maxVal int64
-
-		for i := 0; i < BitLength; i++ {
-			idx := d*BitLength + i
+		start := DimBitOffset[d]
+		for i := 0; i < DimBitLengths[d]; i++ {
+			idx := start + i
 			minVal <<= 1
 			maxVal <<= 1
 
@@ -1566,8 +1746,9 @@ func positiveMod(value, mod int64) int64 {
 	return value
 }
 
-func clampToDomain(value int64) int64 {
-	maxDomain := int64(1<<BitLength) - 1
+// clampToDomainD clamps value to [0, 2^DimBitLengths[d]-1].
+func clampToDomainD(value int64, d int) int64 {
+	maxDomain := int64(1<<DimBitLengths[d]) - 1
 	if value < 0 {
 		return 0
 	}
@@ -1577,9 +1758,9 @@ func clampToDomain(value int64) int64 {
 	return value
 }
 
-func parseScaledFloat(value string, scale float64) int64 {
+func parseScaledFloat(value string, scale float64, d int) int64 {
 	parsed, _ := strconv.ParseFloat(value, 64)
-	return clampToDomain(int64(math.Round(parsed * scale)))
+	return clampToDomainD(int64(math.Round(parsed*scale)), d)
 }
 
 func parseLineItemPoint(cols []string, discountScale int64) (Point, bool) {
@@ -1596,22 +1777,22 @@ func parseLineItemPoint(cols []string, discountScale int64) (Point, bool) {
 
 	values := []int64{
 		ParseDate(cols[10]),
-		parseScaledFloat(cols[6], float64(discountScale)),
-		clampToDomain(int64(qFloat)),
-		parseScaledFloat(cols[7], 100),
-		clampToDomain(lineNumber),
-		clampToDomain(int64(priceFloat / 1000.0)),
+		parseScaledFloat(cols[6], float64(discountScale), 1),
+		clampToDomainD(int64(qFloat), 2),
+		parseScaledFloat(cols[7], 100, 3),
+		clampToDomainD(lineNumber, 4%NumDims),
+		clampToDomainD(int64(priceFloat/1000.0), 5%NumDims),
 		ParseDate(cols[11]),
 		ParseDate(cols[12]),
-		positiveMod(partKey, 1<<BitLength),
-		positiveMod(suppKey, 1<<BitLength),
-		positiveMod(orderKey, 1<<BitLength),
+		positiveMod(partKey, 1<<DimBitLengths[0]),
+		positiveMod(suppKey, 1<<DimBitLengths[0]),
+		positiveMod(orderKey, 1<<DimBitLengths[0]),
 	}
 	for d := 0; d < NumDims; d++ {
 		if d < len(values) {
-			p.Coords[d] = values[d]
+			p.Coords[d] = clampToDomainD(values[d], d)
 		} else {
-			p.Coords[d] = positiveMod(values[len(values)-1]+int64(97*d), 1<<BitLength)
+			p.Coords[d] = positiveMod(values[len(values)-1]+int64(97*d), 1<<DimBitLengths[d])
 		}
 	}
 	return p, true
@@ -1632,8 +1813,8 @@ func pointInBaseQuery(p Point, dateMin, dateMax, discountMin, discountMax, quant
 
 func buildDefaultQuery(points []Point, dateMin, dateMax, discountMin, discountMax, quantityMin, quantityMax, extraWidth int64) RangeQuery {
 	var query RangeQuery
-	maxDomain := int64(1<<BitLength) - 1
 	for d := 0; d < NumDims; d++ {
+		maxDomain := int64(1<<DimBitLengths[d]) - 1
 		query.Bounds[d] = [2]int64{0, maxDomain}
 	}
 	query.Bounds[0] = [2]int64{dateMin, dateMax}
@@ -1656,6 +1837,7 @@ func buildDefaultQuery(points []Point, dateMin, dateMax, discountMin, discountMa
 	}
 	if exemplar != nil {
 		for d := 3; d < NumDims; d++ {
+			maxDomain := int64(1<<DimBitLengths[d]) - 1
 			lo := exemplar.Coords[d] - extraWidth
 			hi := exemplar.Coords[d] + extraWidth
 			if lo < 0 {
@@ -1672,7 +1854,7 @@ func buildDefaultQuery(points []Point, dateMin, dateMax, discountMin, discountMa
 
 func printQueryBounds(query RangeQuery) {
 	for d := 0; d < NumDims; d++ {
-		fmt.Printf("    dim%d [%d, %d]\n", d, query.Bounds[d][0], query.Bounds[d][1])
+		fmt.Printf("    dim%d [%d, %d]  (bitwidth=%d)\n", d, query.Bounds[d][0], query.Bounds[d][1], DimBitLengths[d])
 	}
 }
 
@@ -1695,7 +1877,42 @@ func main() {
 	maxGlobalRegions := flag.Int("max-global-regions", 200000, "abort if database-wide global empty region generation exceeds this cap; 0 disables the cap")
 	maxParentDim := flag.Int("max-parent-dim", NumDims, "maximum dimension depth for parent recursion; NumDims means exact full-depth generation")
 	workers := flag.Int("mhibe-workers", runtime.NumCPU(), "number of workers for parallel M-HIBE proving and client verification")
+	dimBitsFlag := flag.String("dim-bits", "12,4,6,4", "comma-separated bit widths for each of the NumDims dimensions (e.g. \"12,4,6,4\")")
+	expandParentDimsFlag := flag.String("expand-parent-dims", "",
+		"comma-separated dimension indices allowed to expand as parent nodes (e.g. \"0,1,3\" makes dim2 emit empty patterns without recursing into deeper levels); empty means all dimensions expand (default behaviour)")
 	flag.Parse()
+
+	// Parse and apply per-dimension bit widths.
+	{
+		parts := strings.Split(*dimBitsFlag, ",")
+		if len(parts) != NumDims {
+			panic(fmt.Sprintf("-dim-bits must have exactly %d comma-separated values, got %d (%q)", NumDims, len(parts), *dimBitsFlag))
+		}
+		for d, s := range parts {
+			v, err := strconv.Atoi(strings.TrimSpace(s))
+			if err != nil || v < 1 || v > 63 {
+				panic(fmt.Sprintf("-dim-bits[%d]: invalid bit width %q (must be 1..63)", d, s))
+			}
+			DimBitLengths[d] = v
+		}
+	}
+	initDimBits()
+
+	// Parse -expand-parent-dims: if non-empty, reset all dims to false then
+	// re-enable only those listed.
+	if *expandParentDimsFlag != "" {
+		for d := 0; d < NumDims; d++ {
+			DimExpandAsParent[d] = false
+		}
+		for _, s := range strings.Split(*expandParentDimsFlag, ",") {
+			v, err := strconv.Atoi(strings.TrimSpace(s))
+			if err != nil || v < 0 || v >= NumDims {
+				panic(fmt.Sprintf("-expand-parent-dims: invalid dimension index %q (must be 0..%d)", s, NumDims-1))
+			}
+			DimExpandAsParent[v] = true
+		}
+	}
+
 	mhibeWorkers = *workers
 	if mhibeWorkers < 1 {
 		mhibeWorkers = 1
@@ -1717,20 +1934,27 @@ func main() {
 	fmt.Println("[*] Starting ULTIMATE ARCHITECTURE Benchmark...")
 	fmt.Println("[*] Mode: 4D Query-Independent Offline Fixed-Order Parent Supplement + Full Parallel Protocol")
 	fmt.Printf("[*] Full Parallel Workers: %d\n", mhibeWorkers)
+	fmt.Printf("[*] Per-dimension bit widths: dim0=%d dim1=%d dim2=%d dim3=%d  (total=%d)\n",
+		DimBitLengths[0], DimBitLengths[1], DimBitLengths[2], DimBitLengths[3], TotalBitLength)
+	fmt.Printf("[*] Parent-expand dims: dim0=%v dim1=%v dim2=%v dim3=%v\n",
+		DimExpandAsParent[0], DimExpandAsParent[1], DimExpandAsParent[2], DimExpandAsParent[3])
 
 	// 0. 全局初始化
 	mcl.InitFromString("bls12-381")
 	setupStart := time.Now()
-	params, masterKey := wkdibe.Setup(NumDims*BitLength, true)
+	params, masterKey := wkdibe.Setup(TotalBitLength, true)
 
 	var acc bpacc.BpAcc
 	keyDir := "./pkvk-17"
-	acc.KeyGenLoad(8, 17, "my_secure_seed", keyDir)
+	if !*skipZK {
+		acc.KeyGenLoad(8, 17, "my_secure_seed", keyDir)
+	} else {
+		fmt.Println("[*] -skip-zk set: skipping accumulator SRS load")
+	}
 	setupMs := float64(time.Since(setupStart).Nanoseconds()) / 1e6
 	fmt.Printf("[*] Global Setup Time: %.2f ms\n\n", setupMs)
 
 	// 1. 数据加载与分类
-	// 1. ?????????
 	file, err := os.Open(*dataPath)
 	if err != nil {
 		panic(err)
@@ -1845,7 +2069,7 @@ func main() {
 	initialPrefixes := MapToIDs(query)
 	var initialPatterns []string
 	for _, p := range initialPrefixes {
-		initialPatterns = append(initialPatterns, FormatToWildcardPattern(p, NumDims, BitLength))
+		initialPatterns = append(initialPatterns, FormatToWildcardPattern(p))
 	}
 
 	fmt.Println("    [Trace] Starting query intersection/maximal crop...")
