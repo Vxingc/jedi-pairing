@@ -448,13 +448,17 @@ func parentCacheKey(nextDim int, parentPrefixes []string) string {
 	return fmt.Sprintf("%d::%s", nextDim, strings.Join(parentPrefixes, "||"))
 }
 
-// leafExactKey encodes a (parentPrefixes, exactLeafValue) pair for LeafExact.
-// parentPrefixes are the prefix-expanded parent dims; leafDim and leafValue
-// are the exact (non-expanded) penultimate dimension; nextDim is the dim whose
-// occupancy is being stored (the last dim that needs cover).
-func leafExactKey(parentPrefixes []string, leafDim int, leafValue int64) string {
-	leafBin := fmt.Sprintf("%0*b", DimBitLengths[leafDim], leafValue)
-	return fmt.Sprintf("%d::%s||%s", leafDim+1, strings.Join(parentPrefixes, "||"), leafBin)
+// leafExactKey encodes the LeafExact map key for a chain of exact-value
+// non-expandable dimensions. parentPrefixes are the prefix-tree parent dims
+// (all expandable). exactVals[i] is the binary string for the i-th
+// non-expandable dim in the chain (dims firstNonExpand .. NumDims-2).
+// The value stored under this key is the occupancy set of the final dim
+// (NumDims-1).
+func leafExactKey(parentPrefixes []string, exactVals []string) string {
+	parts := make([]string, 0, len(parentPrefixes)+len(exactVals))
+	parts = append(parts, parentPrefixes...)
+	parts = append(parts, exactVals...)
+	return "LEAF::" + strings.Join(parts, "||")
 }
 
 // prefixNodeBounds returns the [min, max] integer range represented by a
@@ -570,56 +574,65 @@ func buildNDPrefixOccupancyIndexSerial(points []Point, query RangeQuery, maxPare
 			walk(0)
 		}
 
-		// Build LeafExact index: for the first non-expandable dim d after a chain
-		// of expandable dims, store (p0..p_{d-1}, v_d_exact) → v_{d+1} occupancy.
-		// This enables exact-value enumeration in buildQueryTouchedGlobalEmptyRegionsND
-		// instead of prefix-tree expansion, avoiding combinatorial explosion.
+		// Build LeafExact index (generalized to arbitrary depth).
 		//
-		// Find the leaf penultimate dim: first non-expandable dim that has a
-		// subsequent dim to cover.
-		for leafPenultimateDim := 1; leafPenultimateDim < NumDims-1; leafPenultimateDim++ {
-			if DimExpandAsParent[leafPenultimateDim] {
-				continue // skip expandable dims
-			}
-			// leafPenultimateDim is non-expandable; check all preceding dims are expandable
-			allPrecExpandable := true
-			for d := 0; d < leafPenultimateDim; d++ {
-				if !DimExpandAsParent[d] {
-					allPrecExpandable = false
-					break
+		// Find firstNonExpand: the first dim >= 1 that is not prefix-expandable
+		// and whose all predecessors are expandable. All dims from firstNonExpand
+		// to NumDims-2 are encoded as exact binary values in the key; the final
+		// dim (NumDims-1) is the one whose occupancy is stored as the map value.
+		{
+			firstNonExpand := -1
+			for d := 1; d < NumDims-1; d++ {
+				if DimExpandAsParent[d] {
+					continue
 				}
-			}
-			if !allPrecExpandable {
-				break // non-contiguous expand pattern; only handle first transition
-			}
-			// Point must fall in the query for leafPenultimateDim
-			if point.Coords[leafPenultimateDim] < query.Bounds[leafPenultimateDim][0] ||
-				point.Coords[leafPenultimateDim] > query.Bounds[leafPenultimateDim][1] {
+				allPre := true
+				for p := 0; p < d; p++ {
+					if !DimExpandAsParent[p] {
+						allPre = false
+						break
+					}
+				}
+				if allPre {
+					firstNonExpand = d
+				}
 				break
 			}
-			leafFinalDim := leafPenultimateDim + 1
-			if leafFinalDim >= NumDims {
-				break
+			if firstNonExpand >= 1 {
+				// Check point is in query for all non-expandable middle dims.
+				inQuery := true
+				for d := firstNonExpand; d < NumDims-1; d++ {
+					if point.Coords[d] < query.Bounds[d][0] || point.Coords[d] > query.Bounds[d][1] {
+						inQuery = false
+						break
+					}
+				}
+				if inQuery {
+					// Build exact-value strings for dims firstNonExpand..NumDims-2.
+					exactVals := make([]string, NumDims-1-firstNonExpand)
+					for d := firstNonExpand; d < NumDims-1; d++ {
+						exactVals[d-firstNonExpand] = fmt.Sprintf("%0*b", DimBitLengths[d], point.Coords[d])
+					}
+					// Walk all prefix combos of the expandable parent dims (0..firstNonExpand-1).
+					parentPrefixes := make([]string, firstNonExpand)
+					var walkLeaf func(dim int)
+					walkLeaf = func(dim int) {
+						if dim == firstNonExpand {
+							key := leafExactKey(parentPrefixes, exactVals)
+							addOccupiedValue(leafExact, key, point.Coords[NumDims-1])
+							return
+						}
+						if len(prefixOptions[dim]) == 0 {
+							return
+						}
+						for _, prefix := range prefixOptions[dim] {
+							parentPrefixes[dim] = prefix
+							walkLeaf(dim + 1)
+						}
+					}
+					walkLeaf(0)
+				}
 			}
-			// Walk all prefix combos of the expandable parent dims
-			parentPrefixes := make([]string, leafPenultimateDim)
-			var walkLeaf func(dim int)
-			walkLeaf = func(dim int) {
-				if dim == leafPenultimateDim {
-					key := leafExactKey(parentPrefixes, leafPenultimateDim, point.Coords[leafPenultimateDim])
-					addOccupiedValue(leafExact, key, point.Coords[leafFinalDim])
-					return
-				}
-				if len(prefixOptions[dim]) == 0 {
-					return
-				}
-				for _, prefix := range prefixOptions[dim] {
-					parentPrefixes[dim] = prefix
-					walkLeaf(dim + 1)
-				}
-			}
-			walkLeaf(0)
-			break // only process the first leaf transition
 		}
 	}
 
@@ -759,22 +772,39 @@ func buildQueryTouchedGlobalEmptyRegionsND(
 			if nextDim+1 >= NumDims || nextDim+1 >= maxParentDim {
 				return
 			}
-			// If this dimension is non-expandable, use LeafExact instead of
-			// the prefix-tree to enumerate the final dimension. This avoids
-			// the (bitLen+1)^k combinatorial explosion from prefix ancestors.
+			// If this dimension is non-expandable, switch to LeafExact enumeration.
+			// The key encodes all non-expandable dims (nextDim..NumDims-2) as exact
+			// binary values; the map value is the occupancy of the final dim (NumDims-1).
+			// This avoids prefix-tree explosion for all remaining dimensions at once.
 			if !DimExpandAsParent[nextDim] {
-				finalDim := nextDim + 1
-				if finalDim >= NumDims {
+				finalDim := NumDims - 1
+				if nextDim >= NumDims-1 {
+					// nextDim IS the final dim: nothing after it to cover; emit gap cover directly.
+					for _, emptyPrefix := range emptyCoversForBounds(query.Bounds[nextDim][0], query.Bounds[nextDim][1], index.occupiedValues(parentPrefixes, nextDim), DimBitLengths[nextDim]) {
+						prefixes := make([]string, NumDims)
+						copy(prefixes, parentPrefixes)
+						prefixes[nextDim] = emptyPrefix
+						patterns = append(patterns, buildPatternFromPrefixes(prefixes))
+						if len(patterns)%4096 == 0 {
+							patterns = selectMaximalPatterns(patterns)
+						}
+						if maxGlobalRegions > 0 && len(patterns) > maxGlobalRegions {
+							patterns = selectMaximalPatterns(patterns)
+							if len(patterns) > maxGlobalRegions {
+								localStop = true
+								atomic.StoreInt32(&stopFlag, 1)
+								return
+							}
+						}
+					}
 					return
 				}
-				// Collect distinct exact values of nextDim that (a) fall in the
-				// query and (b) have at least one finalDim value in the LeafExact
-				// index under this parentPrefixes context.
-				//
-				// We iterate over the LeafExact map to find all keys that match
-				// our parentPrefixes prefix. The key format is:
-				//   "<nextDim+1>::<p0>||<p1>||...<p_{nextDim-1}>||<v_nextDim_binary>"
-				keyPrefix := fmt.Sprintf("%d::%s||", nextDim+1, strings.Join(parentPrefixes, "||"))
+				// Key prefix: "LEAF::{p0}||...||{p_{nextDim-1}}||"
+				// followed by exact binary strings for dims nextDim..NumDims-2.
+				keyPrefix := "LEAF::" + strings.Join(parentPrefixes, "||")
+				if len(parentPrefixes) > 0 {
+					keyPrefix += "||"
+				}
 				for leafKey, leafOccupied := range index.LeafExact {
 					if !strings.HasPrefix(leafKey, keyPrefix) {
 						continue
@@ -782,14 +812,41 @@ func buildQueryTouchedGlobalEmptyRegionsND(
 					if localStop || atomic.LoadInt32(&stopFlag) != 0 {
 						return
 					}
-					// Extract the exact-value binary string for nextDim.
-					exactBin := leafKey[len(keyPrefix):]
-					// Build the full-length prefix for nextDim (it IS the exact value).
-					// Generate empty covers for finalDim.
+					// The remainder of the key is "v_nextDim||v_{nextDim+1}||...||v_{N-2}".
+					// Split into per-dim exact binary strings.
+					remainder := leafKey[len(keyPrefix):]
+					exactParts := strings.Split(remainder, "||")
+					expectedParts := NumDims - 1 - nextDim
+					if len(exactParts) != expectedParts {
+						continue // key from a different NumDims config; skip
+					}
+					// Verify each exact value falls within the query bounds.
+					inBounds := true
+					for i, ep := range exactParts {
+						d := nextDim + i
+						if len(ep) != DimBitLengths[d] {
+							inBounds = false
+							break
+						}
+						var v int64
+						for _, c := range ep {
+							v = v<<1 | int64(c-'0')
+						}
+						if v < query.Bounds[d][0] || v > query.Bounds[d][1] {
+							inBounds = false
+							break
+						}
+					}
+					if !inBounds {
+						continue
+					}
+					// Emit gap-cover patterns for the final dim.
 					for _, emptyPrefix := range emptyCoversForBounds(query.Bounds[finalDim][0], query.Bounds[finalDim][1], leafOccupied, DimBitLengths[finalDim]) {
 						prefixes := make([]string, NumDims)
 						copy(prefixes, parentPrefixes)
-						prefixes[nextDim] = exactBin
+						for i, ep := range exactParts {
+							prefixes[nextDim+i] = ep
+						}
 						prefixes[finalDim] = emptyPrefix
 						patterns = append(patterns, buildPatternFromPrefixes(prefixes))
 						if len(patterns)%4096 == 0 {
@@ -1763,16 +1820,6 @@ func parseScaledFloat(value string, scale float64, d int) int64 {
 	return clampToDomainD(int64(math.Round(parsed*scale)), d)
 }
 
-// safeDimIdx clamps a dimension index to the valid range [0, NumDims-1].
-// Used in parseLineItemPoint so the values[] slice can be built without
-// out-of-bounds access when NumDims < 4.
-func safeDimIdx(d int) int {
-	if d >= NumDims {
-		return NumDims - 1
-	}
-	return d
-}
-
 func parseLineItemPoint(cols []string, discountScale int64) (Point, bool) {
 	var p Point
 	if len(cols) < 13 {
@@ -1787,9 +1834,9 @@ func parseLineItemPoint(cols []string, discountScale int64) (Point, bool) {
 
 	values := []int64{
 		ParseDate(cols[10]),
-		parseScaledFloat(cols[6], float64(discountScale), safeDimIdx(1)),
-		clampToDomainD(int64(qFloat), safeDimIdx(2)),
-		parseScaledFloat(cols[7], 100, safeDimIdx(3)),
+		parseScaledFloat(cols[6], float64(discountScale), 1),
+		clampToDomainD(int64(qFloat), 2%NumDims),
+		parseScaledFloat(cols[7], 100, 3%NumDims),
 		clampToDomainD(lineNumber, 4%NumDims),
 		clampToDomainD(int64(priceFloat/1000.0), 5%NumDims),
 		ParseDate(cols[11]),
@@ -1871,7 +1918,7 @@ func printQueryBounds(query RangeQuery) {
 func main() {
 	uploadKeys := flag.Bool("upload-keys", false, "materialize WKD-IBE keys for every database row before benchmarking")
 	skipZK := flag.Bool("skip-zk", false, "skip ZK accumulator proof generation and verification")
-	dataPath := flag.String("data", "/home/xing/poneglyphdb/src/data/lineitem_120K.tbl", "TPC-H lineitem .tbl file")
+	dataPath := flag.String("data", "/root/poneglyphdb/src/data/lineitem_120K.tbl", "TPC-H lineitem .tbl file")
 	limit := flag.Int("limit", 0, "maximum number of lineitem rows to load; 0 means all rows")
 	poneglyphQ6 := flag.Bool("poneglyph-q6", false, "use PoneglyphDB-compatible 3D range bounds: shipdate [1994-01-01, 1994-12-31], discount [0.05, 0.07], quantity [0, 23]")
 	dateMin := flag.String("date-min", "1994-01-01", "inclusive shipdate lower bound for this benchmark")

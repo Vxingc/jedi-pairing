@@ -1481,7 +1481,7 @@ func printQueryBounds(query RangeQuery) {
 func main() {
 	uploadKeys := flag.Bool("upload-keys", false, "materialize WKD-IBE keys for every database row before benchmarking")
 	skipZK := flag.Bool("skip-zk", false, "skip ZK accumulator proof generation and verification")
-	dataPath := flag.String("data", "/home/xing/poneglyphdb/src/data/lineitem_120K.tbl", "TPC-H lineitem .tbl file")
+	dataPath := flag.String("data", "/home/root/poneglyphdb/src/data/lineitem_120K.tbl", "TPC-H lineitem .tbl file")
 	limit := flag.Int("limit", 0, "maximum number of lineitem rows to load; 0 means all rows")
 	poneglyphQ6 := flag.Bool("poneglyph-q6", false, "use PoneglyphDB-compatible 3D range bounds: shipdate [1994-01-01, 1994-12-31], discount [0.05, 0.07], quantity [0, 23]")
 	dateMin := flag.String("date-min", "1994-01-01", "inclusive shipdate lower bound for this benchmark")

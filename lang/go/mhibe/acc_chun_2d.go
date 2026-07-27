@@ -283,7 +283,7 @@ func proveCompleteness(acc *bpacc.BpAcc, digestDB mcl.G1, dbSet, emptySet []mcl.
 }
 
 func main() {
-	dataPath := flag.String("data", "/home/xing/poneglyphdb/src/data/lineitem_120K.tbl", "TPC-H lineitem .tbl file")
+	dataPath := flag.String("data", "/root/poneglyphdb/src/data/lineitem_120K.tbl", "TPC-H lineitem .tbl file")
 	keyDir := flag.String("keys", "./pkvk-17", "ZK accumulator proving/verifying key directory")
 	proofMode := flag.String("proof-mode", "trapdoor", "witness mode: trapdoor uses CommitFakeG1/ProveBatchNonMemFake; real uses Commit/NonMemProve/AggNonMemProve")
 	limit := flag.Int("limit", 0, "maximum number of lineitem rows to load; 0 means all rows")
